@@ -27,6 +27,7 @@ jobs:
       - name: 检出仓库
         uses: actions/checkout@v4
 
+
       - name: 最大化构建空间
         uses: easimon/maximize-build-space@master
         with:
@@ -200,9 +201,44 @@ jobs:
             fi
           fi
 
-          # Generate anykernel.sh
-          KERNEL_NAME="ABK_OnePlus6_ReSukiSU_SuSFS210_${MODE}"
-          python3 $GITHUB_WORKSPACE/scripts/anykernel_gen.py "$KERNEL_NAME" AnyKernel3/anykernel.sh
+          # Generate anykernel.sh inline
+          KERNEL_DESC="ABK OnePlus6 ReSukiSU+SuSFS2.1.00+Standard"
+          KERNEL_NAME="ABK_OnePlus6_ReSukiSU_SuSFS210_Standard"
+          cat > AnyKernel3/anykernel.sh << AKEOF
+### AnyKernel3 Ramdisk Mod Script
+## osm0sis @ xda-developers
+
+### AnyKernel setup
+properties() { '
+kernel.string=${KERNEL_DESC}
+do.devicecheck=0
+do.modules=0
+do.systemless=0
+do.cleanups=1
+do.cleanupabort=0
+supported.versions=
+supported.patchlevels=
+'; }
+
+block=boot;
+is_slot_device=auto;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
+
+. tools/ak3-core.sh;
+
+## AnyKernel boot install
+dump_boot;
+
+write_boot;
+## end boot install
+
+## dtbo_img flash (OnePlus 6 requires separate dtbo partition)
+if [ -f "dtbo.img" ]; then
+  block=\$(dump_dtbo_partition)
+  write_dtbo
+fi
+AKEOF
 
           cd AnyKernel3
           ZIP_NAME="${KERNEL_NAME}_$(date -u '+%Y%m%d-%H%M').zip"
