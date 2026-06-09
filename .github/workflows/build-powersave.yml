@@ -1,0 +1,236 @@
+name: OnePlus 6 内核编译 - 省电版
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  KERNEL_SOURCE: "https://github.com/Zhanfg/kernel_oneplus_sdm845"
+  KERNEL_BRANCH: "master"
+  DEVICE_NAME: "enchilada"
+  DEFCONFIG: "vendor/enchilada_defconfig"
+  MODE: "PowerSave"
+
+jobs:
+  build:
+    name: "build-enchilada-4.19-${{ env.MODE }}"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 最大化构建空间
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 4096
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+
+      - name: 安装构建依赖
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git build-essential bc flex bison libssl-dev \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            clang lld llvm python3 zip unzip cpio \
+            device-tree-compiler libncurses-dev
+
+      - name: 设置 ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: 2G
+          key: build-enchilada-4.19-${{ env.MODE }}
+
+      - name: 克隆预集成内核源码
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global user.name "abk-builder"
+          git config --global user.email "abk-builder@users.noreply.github.com"
+          git clone --depth=1 -b "$KERNEL_BRANCH" "$KERNEL_SOURCE" kernel
+          cd kernel
+          sed -i 's/ -dirty//g' scripts/setlocalversion
+          sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' scripts/setlocalversion
+          git add -A && git commit -m "Remove -dirty suffix" || true
+          echo "--- 已集成: ReSukiSU/SuSFS v2.1.00/BBR/BBRv2/ipset/BBG/LZ4KD/NTSYNC/Docker+PowerSave ---"
+
+      - name: 应用省电补丁
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd kernel
+          echo "--- 应用 PowerSave defconfig 补丁 ---"
+          patch -p1 < /d/kernel/abk-op6-standalone/scripts/powersave_defconfig.patch
+          echo "✓ 省电补丁已应用"
+          grep -E "PM_WAKELOCKS_GC|PM_AUTOSLEEP|WQ_POWER|CPU_BOOST|CPU_FREQ_DEFAULT_GOV|STEP_WISE|ADRENO_TZ" arch/arm64/configs/vendor/enchilada_defconfig
+
+      - name: 编译内核
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd kernel
+
+          export PATH="/usr/lib/ccache:$PATH"
+          export KBUILD_BUILD_USER="abk"
+          export KBUILD_BUILD_HOST="abk"
+          export KBUILD_BUILD_VERSION=1
+          export KBUILD_BUILD_TIMESTAMP="$(date -u '+%Y-%m-%d %H:%M:%S')"
+
+          make O=out \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CC="ccache clang" \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            LLVM=1 \
+            "$DEFCONFIG"
+
+          make -j"$(nproc --all)" O=out \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CC="ccache clang" \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            LLVM=1
+
+          echo "--- 编译完成 ---"
+          ls -lh out/arch/arm64/boot/Image* 2>/dev/null || {
+            echo "::error::未找到内核镜像产物"
+            exit 1
+          }
+
+          echo "--- 构建 Image.gz-dtb ---"
+          make -j"$(nproc --all)" O=out \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CC="ccache clang" \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            LLVM=1 \
+            Image.gz-dtb
+
+          ls -lh out/arch/arm64/boot/Image.gz-dtb
+
+          DTBO_DIR=out/arch/arm64/boot/dts/qcom
+          echo "--- 强制编译所有 DTBO 覆盖层 ---"
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            CLANG_TRIPLE=aarch64-linux-gnu- CC="ccache clang" LD=ld.lld \
+            DTC_FLAGS="-@" dtbs 2>&1 | tail -20
+
+          echo "--- 准备 dtbo.img ---"
+          if [ -f "../dtbo.img" ]; then
+            echo "✓ 使用仓库 dtbo.img"
+            cp ../dtbo.img ./dtbo.img
+          else
+            DTBO_FILES=$(find "$DTBO_DIR" \( -name "enchilada*.dtbo" -o -name "fajita*.dtbo" -o -name "sdm845*overlay.dtbo" \) 2>/dev/null | sort)
+            if [ -n "$DTBO_FILES" ]; then
+              curl -sL "https://raw.githubusercontent.com/K-Blaaaack/mkdtboimg/main/mkdtboimg.py" -o /tmp/mkdtboimg.py
+              chmod +x /tmp/mkdtboimg.py
+              python3 /tmp/mkdtboimg.py create "$DTBO_DIR/dtbo.img" $DTBO_FILES
+              cp "$DTBO_DIR/dtbo.img" ./dtbo.img
+            else
+              echo "::error::未找到任何 DTBO 文件！"
+              exit 1
+            fi
+          fi
+          ls -lh ./dtbo.img
+
+          ccache -s
+
+      - name: 打包 AnyKernel3
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd kernel
+
+          git clone https://github.com/osm0sis/AnyKernel3.git --depth=1
+          rm -rf AnyKernel3/.git
+          rm -f AnyKernel3/tools/snapshotupdater_static
+
+          KERNEL_IMAGE=$(find out/arch/arm64/boot -name "Image.gz-dtb" | head -n 1)
+          if [ -z "$KERNEL_IMAGE" ]; then
+            KERNEL_IMAGE=$(find out/arch/arm64/boot \
+              -name "Image.gz" -o -name "Image-dtb" -o -name "Image" | head -n 1)
+          fi
+          if [ -z "$KERNEL_IMAGE" ]; then
+            echo "::error::未找到内核镜像"
+            exit 1
+          fi
+          cp "$KERNEL_IMAGE" AnyKernel3/
+
+          if [ -f "dtbo.img" ]; then
+            cp dtbo.img AnyKernel3/
+          else
+            echo "::error::dtbo.img 未找到！"
+            exit 1
+          fi
+
+          curl -sL "https://github.com/libxzr/vbmeta-disable-verification/releases/download/v1.0/vbmeta-disable-verification.zip" -o /tmp/vbmeta.zip 2>/dev/null
+          if [ -s /tmp/vbmeta.zip ]; then
+            unzip -j /tmp/vbmeta.zip "arm64-v8a/vbmeta-disable-verification" -d AnyKernel3/tools/ 2>/dev/null
+            if [ -f AnyKernel3/tools/vbmeta-disable-verification ]; then
+              chmod +x AnyKernel3/tools/vbmeta-disable-verification
+              echo "✓ vbmeta-disable-verification 已添加"
+            fi
+          fi
+
+          KERNEL_NAME="ABK_OnePlus6_ReSukiSU_SuSFS210_${MODE}"
+          python3 /d/kernel/abk-op6-standalone/scripts/anykernel_gen.py "$KERNEL_NAME" AnyKernel3/anykernel.sh
+
+          cd AnyKernel3
+          ZIP_NAME="${KERNEL_NAME}_$(date -u '+%Y%m%d-%H%M').zip"
+          zip -r9 "../${ZIP_NAME}" Image.gz-dtb anykernel.sh LICENSE README.md META-INF/ tools/ modules/ patch/ ramdisk/
+          if [ -f "dtbo.img" ]; then
+            zip -j "../${ZIP_NAME}" dtbo.img
+          fi
+
+          cd ..
+          KEY_DIR=$(mktemp -d)
+          keytool -genkeypair -v -keystore "$KEY_DIR/testkey.jks" -alias testkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass testkey -keypass testkey \
+            -dname "CN=AnyKernel3, OU=ABK, O=ABK" 2>/dev/null
+          jarsigner -keystore "$KEY_DIR/testkey.jks" -storepass testkey -keypass testkey \
+            -signedjar "${ZIP_NAME}.signed" "${ZIP_NAME}" testkey 2>/dev/null
+          if [ -f "${ZIP_NAME}.signed" ]; then
+            mv "${ZIP_NAME}.signed" "${ZIP_NAME}"
+            echo "✓ ZIP 已签名"
+          fi
+          rm -rf "$KEY_DIR"
+
+          ls -lh "${ZIP_NAME}"
+          echo "ARTIFACT_NAME=${ZIP_NAME%.zip}" >> "$GITHUB_ENV"
+
+      - name: 上传 AnyKernel3
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: kernel/ABK_OnePlus6_*.zip
+          if-no-files-found: error
