@@ -202,7 +202,7 @@ jobs:
 
           # Generate anykernel.sh
           KERNEL_NAME="ABK_OnePlus6_ReSukiSU_SuSFS210_${MODE}"
-          python3 /d/kernel/abk-op6-standalone/scripts/anykernel_gen.py "$KERNEL_NAME" AnyKernel3/anykernel.sh
+          python3 $GITHUB_WORKSPACE/scripts/anykernel_gen.py "$KERNEL_NAME" AnyKernel3/anykernel.sh
 
           cd AnyKernel3
           ZIP_NAME="${KERNEL_NAME}_$(date -u '+%Y%m%d-%H%M').zip"

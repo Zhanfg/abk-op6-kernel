@@ -72,7 +72,7 @@ jobs:
           set -euo pipefail
           cd kernel
           echo "--- 应用 PowerSave defconfig 补丁 ---"
-          patch -p1 < /d/kernel/abk-op6-standalone/scripts/powersave_defconfig.patch
+          patch -p1 < "$GITHUB_WORKSPACE/scripts/powersave_defconfig.patch"
           echo "✓ 省电补丁已应用"
           grep -E "PM_WAKELOCKS_GC|PM_AUTOSLEEP|WQ_POWER|CPU_BOOST|CPU_FREQ_DEFAULT_GOV|STEP_WISE|ADRENO_TZ" arch/arm64/configs/vendor/enchilada_defconfig
 
@@ -202,7 +202,7 @@ jobs:
           fi
 
           KERNEL_NAME="ABK_OnePlus6_ReSukiSU_SuSFS210_${MODE}"
-          python3 /d/kernel/abk-op6-standalone/scripts/anykernel_gen.py "$KERNEL_NAME" AnyKernel3/anykernel.sh
+          python3 $GITHUB_WORKSPACE/scripts/anykernel_gen.py "$KERNEL_NAME" AnyKernel3/anykernel.sh
 
           cd AnyKernel3
           ZIP_NAME="${KERNEL_NAME}_$(date -u '+%Y%m%d-%H%M').zip"
