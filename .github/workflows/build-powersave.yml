@@ -1,4 +1,4 @@
-name: OnePlus 6 内核编译 - 省电版
+name: Build PowerSave
 
 permissions:
   contents: write
@@ -13,7 +13,6 @@ on:
 env:
   KERNEL_SOURCE: "https://github.com/Zhanfg/kernel_oneplus_sdm845"
   KERNEL_BRANCH: "master"
-  DEVICE_NAME: "enchilada"
   DEFCONFIG: "vendor/enchilada_defconfig"
   MODE: "PowerSave"
 
@@ -26,7 +25,6 @@ jobs:
     steps:
       - name: 检出仓库
         uses: actions/checkout@v4
-
 
       - name: 最大化构建空间
         uses: easimon/maximize-build-space@master
@@ -65,7 +63,7 @@ jobs:
           sed -i 's/ -dirty//g' scripts/setlocalversion
           sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' scripts/setlocalversion
           git add -A && git commit -m "Remove -dirty suffix" || true
-          echo "--- 已集成: ReSukiSU/SuSFS v2.1.00/BBR/BBRv2/ipset/BBG/LZ4KD/NTSYNC/Docker+PowerSave ---"
+          echo "--- 内核源码已就绪 (PowerSave 模式) ---"
 
       - name: 应用省电补丁
         shell: bash
@@ -75,6 +73,7 @@ jobs:
           echo "--- 应用 PowerSave defconfig 补丁 ---"
           patch -p1 < "$GITHUB_WORKSPACE/scripts/powersave_defconfig.patch"
           echo "✓ 省电补丁已应用"
+          echo "=== 验证 PowerSave 配置 ==="
           grep -E "PM_WAKELOCKS_GC|PM_AUTOSLEEP|WQ_POWER|CPU_BOOST|CPU_FREQ_DEFAULT_GOV|STEP_WISE|ADRENO_TZ" arch/arm64/configs/vendor/enchilada_defconfig
 
       - name: 编译内核
@@ -116,12 +115,6 @@ jobs:
             STRIP=llvm-strip \
             LLVM=1
 
-          echo "--- 编译完成 ---"
-          ls -lh out/arch/arm64/boot/Image* 2>/dev/null || {
-            echo "::error::未找到内核镜像产物"
-            exit 1
-          }
-
           echo "--- 构建 Image.gz-dtb ---"
           make -j"$(nproc --all)" O=out \
             ARCH=arm64 \
@@ -138,12 +131,13 @@ jobs:
             Image.gz-dtb
 
           ls -lh out/arch/arm64/boot/Image.gz-dtb
+          echo "--- 内核编译完成 ---"
 
           DTBO_DIR=out/arch/arm64/boot/dts/qcom
-          echo "--- 强制编译所有 DTBO 覆盖层 ---"
+          echo "--- 编译 DTBO 覆盖层 ---"
           make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             CLANG_TRIPLE=aarch64-linux-gnu- CC="ccache clang" LD=ld.lld \
-            DTC_FLAGS="-@" dtbs 2>&1 | tail -20
+            DTC_FLAGS="-@" dtbs 2>&1 | tail -5
 
           echo "--- 准备 dtbo.img ---"
           if [ -f "../dtbo.img" ]; then
@@ -153,7 +147,6 @@ jobs:
             DTBO_FILES=$(find "$DTBO_DIR" \( -name "enchilada*.dtbo" -o -name "fajita*.dtbo" -o -name "sdm845*overlay.dtbo" \) 2>/dev/null | sort)
             if [ -n "$DTBO_FILES" ]; then
               curl -sL "https://raw.githubusercontent.com/K-Blaaaack/mkdtboimg/main/mkdtboimg.py" -o /tmp/mkdtboimg.py
-              chmod +x /tmp/mkdtboimg.py
               python3 /tmp/mkdtboimg.py create "$DTBO_DIR/dtbo.img" $DTBO_FILES
               cp "$DTBO_DIR/dtbo.img" ./dtbo.img
             else
@@ -162,7 +155,6 @@ jobs:
             fi
           fi
           ls -lh ./dtbo.img
-
           ccache -s
 
       - name: 打包 AnyKernel3
@@ -174,6 +166,7 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3.git --depth=1
           rm -rf AnyKernel3/.git
           rm -f AnyKernel3/tools/snapshotupdater_static
+          echo "✓ 已移除 OnePlus 6T 专用工具 (snapshotupdater_static)"
 
           KERNEL_IMAGE=$(find out/arch/arm64/boot -name "Image.gz-dtb" | head -n 1)
           if [ -z "$KERNEL_IMAGE" ]; then
@@ -184,6 +177,7 @@ jobs:
             echo "::error::未找到内核镜像"
             exit 1
           fi
+          echo "Found kernel image: $KERNEL_IMAGE"
           cp "$KERNEL_IMAGE" AnyKernel3/
 
           if [ -f "dtbo.img" ]; then
@@ -205,40 +199,33 @@ jobs:
           KERNEL_DESC="ABK OnePlus6 ReSukiSU+SuSFS2.1.00+PowerSave(Schedutil+NoBoost+Autosleep)"
           KERNEL_NAME="ABK_OnePlus6_ReSukiSU_SuSFS210_PowerSave"
           cat > AnyKernel3/anykernel.sh << AKEOF
-### AnyKernel3 Ramdisk Mod Script
-## osm0sis @ xda-developers
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
 
-### AnyKernel setup
-properties() { '
-kernel.string=${KERNEL_DESC}
-do.devicecheck=0
-do.modules=0
-do.systemless=0
-do.cleanups=1
-do.cleanupabort=0
-supported.versions=
-supported.patchlevels=
-'; }
+          ### AnyKernel setup
+          properties() { '
+          kernel.string=${KERNEL_DESC}
+          do.devicecheck=0
+          do.modules=0
+          do.systemless=0
+          do.cleanups=1
+          do.cleanupabort=0
+          supported.versions=
+          supported.patchlevels=
+          '; }
 
-block=boot;
-is_slot_device=auto;
-ramdisk_compression=auto;
-patch_vbmeta_flag=auto;
+          block=boot;
+          is_slot_device=auto;
+          ramdisk_compression=auto;
+          patch_vbmeta_flag=auto;
 
-. tools/ak3-core.sh;
+          . tools/ak3-core.sh;
 
-## AnyKernel boot install
-dump_boot;
-
-write_boot;
-## end boot install
-
-## dtbo_img flash (OnePlus 6 requires separate dtbo partition)
-if [ -f "dtbo.img" ]; then
-  block=\$(dump_dtbo_partition)
-  write_dtbo
-fi
-AKEOF
+          ## AnyKernel boot install
+          dump_boot;
+          write_boot;
+          ## end boot install
+          AKEOF
 
           cd AnyKernel3
           ZIP_NAME="${KERNEL_NAME}_$(date -u '+%Y%m%d-%H%M').zip"
@@ -264,7 +251,7 @@ AKEOF
           ls -lh "${ZIP_NAME}"
           echo "ARTIFACT_NAME=${ZIP_NAME%.zip}" >> "$GITHUB_ENV"
 
-      - name: 上传 AnyKernel3
+      - name: 上传 Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}

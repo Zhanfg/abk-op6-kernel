@@ -8,13 +8,18 @@ OnePlus 6 (Enchilada/SDM845) Android 4.19 自定义内核，支持 OxygenOS / De
 |------|------|------|
 | **ReSukiSU** | v4.1.0 | 基于 syscall table hook + tracepoint hook 的完整 root 方案 |
 | **SuSFS** | v2.1.00 | 文件/进程隐藏框架，支持 deny list、hide packages、mount namespace |
-| **BBR** | v2 | TCP 拥塞控制算法，比 Cubic 快 10-30% |
-| **BBRv2** | — | BBR 第二代，改善低带宽场景性能 |
+| **BBR** | v1 | TCP 拥塞控制算法，比 Cubic 快 10-30% |
 | **ipset** | — | 高性能 IP 集合过滤，配合 iptables/nftables |
-| **BBG** | — | Block Buffer Layer 增强，提升 I/O 吞吐 |
+| **FQ_CODEL** | — | 公平队列拥塞控制，降低延迟 |
+| **BBG** | — | Baseband Guard 基带安全防护 |
 | **LZ4KD** | — | LZ4 压缩算法优化版，加快 zram/ramdisk 解压 |
 | **NTSYNC** | — | NT 同步原语支持（Wine/Proton 游戏兼容层） |
 | **Docker** | — | 容器支持（namespace、cgroup、overlayfs） |
+| **零宽绕过修复** | — | fs/unicode 补丁，修复零宽字符检测绕过 |
+| **GPU 频率优化** | — | 10 档频率表（515/380 MHz 中间档） |
+| **调度器调参** | — | CFS 4ms, hispeed 80, WALT hist_size=3 |
+
+> ⚠️ **BBRv2 已禁用** — 与 4.19 TCP API 不兼容，需单独适配
 
 ## 支持管理器
 
@@ -98,15 +103,15 @@ ABK_OnePlus6_ReSukiSU_SuSFS210_*.zip
 
 1. Fork 本仓库
 2. 切换到 `main` 分支
-3. 运行 `build-standard.yml` 或 `build-powersave.yml`
-4. 在 Actions 页面下载 Artifact
+3. 在 Actions 页面手动运行 `Build Standard` 或 `Build PowerSave`
+4. 编译完成后下载 Artifact
 
 ## Changelog
 
 ### v1.0 (2026-06-09)
 - 首次发布
 - ReSukiSU v4.1.0 + SuSFS v2.1.00
-- 完整 BBR/BBRv2/ipset/BBG/LZ4KD/NTSYNC/Docker 支持
+- 完整 BBR/FQ_CODEL/ipset/BBG/LZ4KD/NTSYNC/Docker 支持
 - 标准版 + 省电版双版本
 - OxygenOS Recovery 兼容签名
 - 完整 DTBO 支持（16 overlays, enchilada + fajita）
