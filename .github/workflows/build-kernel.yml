@@ -7,17 +7,22 @@ on:
         description: Build variant
         required: true
         type: string
+      kernel_ref:
+        description: Kernel source branch or 40-character commit SHA
+        required: false
+        default: master
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: oneplus6-${{ inputs.mode }}-${{ github.ref }}
+  group: oneplus6-${{ inputs.mode }}-${{ inputs.kernel_ref }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   KERNEL_SOURCE: https://github.com/Zhanfg/kernel_oneplus_sdm845
-  KERNEL_BRANCH: master
+  KERNEL_REF: ${{ inputs.kernel_ref }}
   DEFCONFIG: vendor/enchilada_defconfig
   MODE: ${{ inputs.mode }}
   ANYKERNEL_REPOSITORY: https://github.com/osm0sis/AnyKernel3.git
@@ -31,7 +36,7 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      - name: 验证构建模式
+      - name: 验证构建输入
         shell: bash
         run: |
           set -euo pipefail
@@ -39,6 +44,7 @@ jobs:
             Standard|PowerSave) ;;
             *) echo "::error::Unsupported build mode: ${MODE}"; exit 1 ;;
           esac
+          test -n "${KERNEL_REF}"
 
       - name: 最大化构建空间
         uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
@@ -68,14 +74,22 @@ jobs:
         uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639 # v1.2
         with:
           max-size: 2G
-          key: build-enchilada-4.19-${{ inputs.mode }}
+          key: build-enchilada-4.19-${{ inputs.mode }}-${{ inputs.kernel_ref }}
 
       - name: 固定并检出内核源码
         shell: bash
         run: |
           set -euo pipefail
-          SOURCE_SHA="$(git ls-remote "${KERNEL_SOURCE}.git" "refs/heads/${KERNEL_BRANCH}" | awk '{print $1}')"
-          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Unable to resolve kernel source"; exit 1; }
+
+          if [[ "${KERNEL_REF}" =~ ^[0-9a-f]{40}$ ]]; then
+            SOURCE_SHA="${KERNEL_REF}"
+          else
+            SOURCE_SHA="$(git ls-remote "${KERNEL_SOURCE}.git" "refs/heads/${KERNEL_REF}" | awk '{print $1}')"
+          fi
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::Unable to resolve kernel source ref: ${KERNEL_REF}"
+            exit 1
+          }
 
           rm -rf "${GITHUB_WORKSPACE}/kernel"
           mkdir "${GITHUB_WORKSPACE}/kernel"
@@ -92,6 +106,28 @@ jobs:
             echo "SOURCE_DATE_EPOCH=${SOURCE_EPOCH}"
             echo "KERNEL_BUILD_TIMESTAMP=$(date -u -d "@${SOURCE_EPOCH}" '+%Y-%m-%d %H:%M:%S')"
           } >> "${GITHUB_ENV}"
+
+      - name: 验证 ReSukiSU 与 SuSFS 来源
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/kernel"
+          BASELINE=RESUKISU_SUSFS_BASELINE.env
+          test -s "${BASELINE}"
+
+          while IFS='=' read -r key value; do
+            case "${key}" in
+              RESUKISU_REPOSITORY|RESUKISU_COMMIT|RESUKISU_TAG|RESUKISU_VERSION_CODE|SUSFS_VERSION|SUSFS_PATCH_REPOSITORY|SUSFS_OLD_4_19_PATCH_COMMIT|SUSFS_NEW_4_19_PATCH_COMMIT|PORT_METHOD|CHECKED_AT_UTC)
+                printf '%s=%s\n' "${key}" "${value}" >> "${GITHUB_ENV}"
+                ;;
+            esac
+          done < "${BASELINE}"
+
+          grep -q '^RESUKISU_REPOSITORY=ReSukiSU/ReSukiSU$' "${BASELINE}"
+          grep -Eq '^RESUKISU_COMMIT=[0-9a-f]{40}$' "${BASELINE}"
+          grep -q '^SUSFS_VERSION=v2.2.0$' "${BASELINE}"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          test -f drivers/kernelsu/uapi/app_profile.h
 
       - name: 应用 PowerSave 配置补丁
         if: inputs.mode == 'PowerSave'
@@ -137,6 +173,11 @@ jobs:
           )
 
           make "${MAKE_ARGS[@]}" "${DEFCONFIG}"
+          grep -q '^CONFIG_KSU=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS=y$' out/.config
+          grep -q '^# CONFIG_KSU_MANUAL_HOOK is not set$' out/.config
+          grep -q '^CONFIG_THREAD_INFO_IN_TASK=y$' out/.config
+
           make -j"$(nproc --all)" "${MAKE_ARGS[@]}" "DTC_FLAGS=-@" Image.gz-dtb dtbs
           test -s out/arch/arm64/boot/Image.gz-dtb
 
@@ -169,8 +210,17 @@ jobs:
             echo "codename=enchilada"
             echo "mode=${MODE}"
             echo "kernel_source=${KERNEL_SOURCE}"
-            echo "kernel_branch=${KERNEL_BRANCH}"
+            echo "kernel_ref=${KERNEL_REF}"
             echo "kernel_source_sha=${KERNEL_SOURCE_SHA}"
+            echo "resukisu_repository=${RESUKISU_REPOSITORY}"
+            echo "resukisu_commit=${RESUKISU_COMMIT}"
+            echo "resukisu_tag=${RESUKISU_TAG}"
+            echo "resukisu_version_code=${RESUKISU_VERSION_CODE}"
+            echo "susfs_version=${SUSFS_VERSION}"
+            echo "susfs_patch_repository=${SUSFS_PATCH_REPOSITORY}"
+            echo "susfs_old_4_19_patch_commit=${SUSFS_OLD_4_19_PATCH_COMMIT}"
+            echo "susfs_new_4_19_patch_commit=${SUSFS_NEW_4_19_PATCH_COMMIT}"
+            echo "susfs_port_method=${PORT_METHOD}"
             echo "build_repository=${GITHUB_REPOSITORY}"
             echo "build_repository_sha=${GITHUB_SHA}"
             echo "workflow_run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
@@ -190,7 +240,7 @@ jobs:
           } > BUILD_INFO.txt
 
           cp out/.config kernel.config
-          sha256sum BUILD_INFO.txt kernel.config DTBO_FILES.txt > BUILD_METADATA.sha256
+          sha256sum BUILD_INFO.txt kernel.config DTBO_FILES.txt RESUKISU_SUSFS_BASELINE.env > BUILD_METADATA.sha256
 
       - name: 打包 AnyKernel3
         shell: bash
@@ -209,9 +259,10 @@ jobs:
 
           cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
           cp dtbo.img AnyKernel3/dtbo.img
-          cp BUILD_INFO.txt DTBO_FILES.txt AnyKernel3/
+          cp BUILD_INFO.txt DTBO_FILES.txt RESUKISU_SUSFS_BASELINE.env AnyKernel3/
 
-          KERNEL_DESC="ABK OnePlus 6 ${MODE} ReSukiSU + SuSFS 2.1.00 (${KERNEL_SOURCE_SHORT})"
+          RESUKISU_COMMIT_SHORT="${RESUKISU_COMMIT:0:8}"
+          KERNEL_DESC="ABK OnePlus 6 ${MODE} ReSukiSU ${RESUKISU_TAG}+${RESUKISU_COMMIT_SHORT} / SuSFS ${SUSFS_VERSION} (${KERNEL_SOURCE_SHORT})"
           cat > AnyKernel3/anykernel.sh << EOF
           ### AnyKernel3 Ramdisk Mod Script
           ## osm0sis @ xda-developers
@@ -239,9 +290,9 @@ jobs:
           EOF
           sed -i 's/^          //' AnyKernel3/anykernel.sh
 
-          ZIP_NAME="ABK_OnePlus6_ReSukiSU_SuSFS210_${MODE}_${KERNEL_SOURCE_SHORT}_$(date -u '+%Y%m%d-%H%M').zip"
+          ZIP_NAME="ABK_OnePlus6_ReSukiSU_SuSFS220_${MODE}_${KERNEL_SOURCE_SHORT}_$(date -u '+%Y%m%d-%H%M').zip"
           (cd AnyKernel3 && zip -r9 "../${ZIP_NAME}" .)
-          unzip -l "${ZIP_NAME}" | grep -E 'Image.gz-dtb|dtbo.img|anykernel.sh|BUILD_INFO.txt|tools/ak3-core.sh'
+          unzip -l "${ZIP_NAME}" | grep -E 'Image.gz-dtb|dtbo.img|anykernel.sh|BUILD_INFO.txt|RESUKISU_SUSFS_BASELINE.env|tools/ak3-core.sh'
           sha256sum "${ZIP_NAME}" > "${ZIP_NAME}.sha256"
           echo "ARTIFACT_NAME=${ZIP_NAME%.zip}" >> "${GITHUB_ENV}"
           echo "ZIP_NAME=${ZIP_NAME}" >> "${GITHUB_ENV}"
@@ -251,10 +302,13 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "# OnePlus 6 kernel build"
+            echo "# OnePlus 6 ReSukiSU / SuSFS 2.2 build"
             echo
             echo "- Mode: \`${MODE}\`"
+            echo "- Kernel source ref: \`${KERNEL_REF}\`"
             echo "- Kernel source SHA: \`${KERNEL_SOURCE_SHA}\`"
+            echo "- ReSukiSU: \`${RESUKISU_TAG}@${RESUKISU_COMMIT}\`"
+            echo "- SuSFS: \`${SUSFS_VERSION}\`"
             echo "- Artifact: \`${ZIP_NAME}\`"
             echo "- SHA256: \`$(awk '{print $1}' "${GITHUB_WORKSPACE}/kernel/${ZIP_NAME}.sha256")\`"
             echo
@@ -272,6 +326,7 @@ jobs:
             kernel/BUILD_METADATA.sha256
             kernel/DTBO_FILES.txt
             kernel/kernel.config
+            kernel/RESUKISU_SUSFS_BASELINE.env
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
