@@ -1,124 +1,197 @@
-# ABK OnePlus 6 Kernel - ReSukiSU + SuSFS v2.1.00
+# ABK OnePlus 6 Kernel
 
-OnePlus 6 (Enchilada/SDM845) Android 4.19 自定义内核，支持 OxygenOS / DerpFest / LineageOS。
+面向 **OnePlus 6（enchilada / SDM845）** 的 Linux 4.19 自定义内核构建与发布仓库。
 
-## 内置功能
+> 当前项目仍处于验证阶段。CI 能生成产物，不代表所有 ROM、Recovery 和硬件功能都已完成真机验证。刷入前必须准备可用的原版 `boot.img` 或其他可靠回滚方案。
 
-| 功能 | 版本 | 说明 |
-|------|------|------|
-| **ReSukiSU** | v4.1.0 | 基于 syscall table hook + tracepoint hook 的完整 root 方案 |
-| **SuSFS** | v2.1.00 | 文件/进程隐藏框架，支持 deny list、hide packages、mount namespace |
-| **BBR** | v1 | TCP 拥塞控制算法，比 Cubic 快 10-30% |
-| **ipset** | — | 高性能 IP 集合过滤，配合 iptables/nftables |
-| **FQ_CODEL** | — | 公平队列拥塞控制，降低延迟 |
-| **BBG** | — | Baseband Guard 基带安全防护 |
-| **LZ4KD** | — | LZ4 压缩算法优化版，加快 zram/ramdisk 解压 |
-| **NTSYNC** | — | NT 同步原语支持（Wine/Proton 游戏兼容层） |
-| **Docker** | — | 容器支持（namespace、cgroup、overlayfs） |
-| **零宽绕过修复** | — | fs/unicode 补丁，修复零宽字符检测绕过 |
-| **GPU 频率优化** | — | 10 档频率表（515/380 MHz 中间档） |
-| **调度器调参** | — | CFS 4ms, hispeed 80, WALT hist_size=3 |
+## 项目组成
 
-> ⚠️ **BBRv2 已禁用** — 与 4.19 TCP API 不兼容，需单独适配
+本项目由两个仓库共同组成：
 
-## 支持管理器
+| 仓库 | 作用 |
+|---|---|
+| [`Zhanfg/abk-op6-kernel`](https://github.com/Zhanfg/abk-op6-kernel) | GitHub Actions、Standard / PowerSave 构建、AnyKernel3 打包、发布文档 |
+| [`Zhanfg/kernel_oneplus_sdm845`](https://github.com/Zhanfg/kernel_oneplus_sdm845) | OnePlus 6/6T SDM845 Linux 4.19 内核源码与已合入补丁 |
 
-- ✅ **ReSukiSU Manager** — 官方推荐，支持所有 SuSFS 功能
-- ✅ **KernelPatch** — 通过 KernelPatch 适配
-- ✅ **SukiSU Ultra** — 兼容模式
-- ✅ **KOWSU** — 兼容模式
+构建仓库默认从源码仓库的 `master` 分支拉取代码，因此源码更新后，后续构建会自动使用新的源码提交。
 
-## 两种版本
+## 目标设备与基线
 
-### Standard（标准版）
-- CPU 默认使用 **Schedutil** 调频器
-- **CPU Boost 开启**（触摸瞬间拉频，响应更快）
-- 适合追求性能的用户
+| 项目 | 当前设置 |
+|---|---|
+| 主设备 | OnePlus 6 |
+| 设备代号 | `enchilada` |
+| SoC | Qualcomm SDM845 |
+| 架构 | ARM64 / AArch64 |
+| 内核版本 | Linux 4.19.x |
+| Defconfig | `vendor/enchilada_defconfig` |
+| 内核产物 | `Image.gz-dtb` |
+| 附加产物 | `dtbo.img`、AnyKernel3 ZIP |
 
-### PowerSave（省电版）
-- CPU 默认使用 **Schedutil** 调频器
-- **CPU Boost 关闭**（平滑调频，省电）
-- **PM Autosleep 开启**（灭屏深度休眠）
-- **Workqueue 省电模式**（降低后台 CPU 唤醒）
-- **Wakelocks GC**（清理泄漏的 wakelock）
-- **GPU Adreno TZ**（GPU 空闲自动降频）
-- **Thermal Step Wise**（温控更平滑降频）
-- 适合追求续航的用户
+源码中包含部分 OnePlus 6T（`fajita`）设备树覆盖文件，但当前构建仍以 `enchilada_defconfig` 为主。**未完成 OnePlus 6T 真机验证前，本项目不声明完整支持 OnePlus 6T。**
 
-## 硬件信息
+## 已集成功能
 
-| 项目 | 参数 |
-|------|------|
-| 设备 | OnePlus 6 (Enchilada) |
-| 芯片 | Qualcomm SDM845 |
-| 架构 | ARM64 (AArch64) |
-| 内核版本 | 4.19.x |
-| 编译器 | Clang/LLVM + GCC cross-compile |
-| 内核格式 | `Image.gz-dtb`（压缩格式，适配 boot 分区） |
-| DTBO | 完整 16 个覆盖层（enchilada 11 + fajita 5），`mkdtboimg` 格式 |
+以下项目表示源码或配置中已经合入，不等同于全部通过真机运行时验证。
 
-## ZIP 结构
+### Root 与隐藏
 
+- ReSukiSU v4.1.0
+- SuSFS v2.1.00
+- KernelPatch / SukiSU Ultra / KOWSU 兼容路径
+
+### 网络
+
+- BBR v1
+- FQ_CODEL
+- ipset
+- Netfilter 扩展
+
+> BBRv2 当前未启用。现有 4.19 TCP API 与已尝试的 BBRv2 实现不兼容，不能仅通过打开配置项完成适配。
+
+### 系统与兼容功能
+
+- Baseband Guard（BBG）
+- LZ4KD
+- NTSYNC
+- Docker 所需的部分 namespace、cgroup 与 overlayfs 支持
+- Unicode 零宽字符绕过修复
+- GPU 频率表与调度参数调整
+
+## 构建变体
+
+### Standard
+
+- 使用 `Schedutil` 调频器
+- 保留 CPU Boost
+- 面向响应速度和日常性能
+
+### PowerSave
+
+在 Standard 基础上，通过构建时补丁调整：
+
+- 关闭 CPU Boost
+- 开启 PM Autosleep
+- 开启 Workqueue 省电模式
+- 开启 Wakelock GC
+- 使用 Adreno TZ GPU governor
+- 使用 Step Wise Thermal governor
+
+PowerSave 是独立构建变体，不应把它的配置直接固化到源码仓库默认 defconfig 中。
+
+## 当前验证状态
+
+| 层级 | 含义 | 当前要求 |
+|---|---|---|
+| Build verified | CI 编译完成并生成完整 ZIP | 每次发布必须附 Actions 记录、源码 SHA 和校验值 |
+| Boot verified | 指定设备与 ROM 可以正常开机 | 需要记录设备、ROM、固件和刷入方式 |
+| Runtime verified | 蜂窝、Wi-Fi、相机、指纹、充电、休眠、Root 等通过测试 | 未完成前不得标记为 Stable |
+
+仓库中的功能说明不能替代真机验收结果。发布页应明确标注属于 Experimental、Boot Verified 还是 Runtime Verified。
+
+## 构建方法
+
+1. 打开本仓库的 **Actions** 页面。
+2. 选择 `Build Standard` 或 `Build PowerSave`。
+3. 点击 **Run workflow**。
+4. 构建完成后下载 Artifact。
+5. 核对构建日志、源码提交和 ZIP 校验值。
+
+两个工作流分别位于：
+
+```text
+.github/workflows/build-standard.yml
+.github/workflows/build-powersave.yml
 ```
-ABK_OnePlus6_ReSukiSU_SuSFS210_*.zip
-├── Image.gz-dtb          # 内核 + DTB（压缩）
-├── dtbo.img              # DTB 覆盖层镜像（16 overlays）
-├── anykernel.sh          # AnyKernel3 刷机脚本
-├── LICENSE
-├── README.md
-├── META-INF/
-│   └── com/google/android/
-│       ├── update-binary   # 刷机入口
-│       └── updater-script  # 版本检查
-├── tools/
-│   ├── ak3-core.sh        # AnyKernel3 核心
-│   ├── busybox
-│   ├── magiskboot
-│   ├── magiskpolicy
-│   ├── vbmeta-disable-verification  # vbmeta 禁用工具
-│   ├── lptools_static
-│   ├── httools_static
-│   └── fec
-├── modules/
-├── patch/
-└── ramdisk/
+
+源码来源由工作流中的以下变量指定：
+
+```yaml
+KERNEL_SOURCE: https://github.com/Zhanfg/kernel_oneplus_sdm845
+KERNEL_BRANCH: master
+DEFCONFIG: vendor/enchilada_defconfig
 ```
 
-## 刷入方法
+## 刷入与回滚
 
-1. **OxygenOS Recovery**：重启到 recovery → Apply from storage → 选择 ZIP
-2. **TWRP**：重启到 TWRP → Install → 选择 ZIP
-3. **AB 分区设备**：`fastboot flash boot Image.gz-dtb` + `fastboot flash dtbo dtbo.img`
+### 推荐方式
 
-> 注意：ZIP 已签名（jarsigner），兼容 OxygenOS Stock Recovery
+使用兼容 AnyKernel3 的自定义 Recovery 刷入完整 ZIP。
 
-## 兼容性
+刷入前至少准备：
 
-- ✅ OxygenOS (Stock)
-- ✅ DerpFest 16.x
-- ✅ LineageOS 23.x
-- ⚠️ 其他基于 LineageOS 的 ROM 需测试
+- 当前系统对应的原版 `boot.img`
+- 可用的 Fastboot 环境
+- 可进入的 Recovery 或其他救砖路径
+- 当前重要数据备份
 
-## 编译方法
+### 不要这样操作
 
-1. Fork 本仓库
-2. 切换到 `main` 分支
-3. 在 Actions 页面手动运行 `Build Standard` 或 `Build PowerSave`
-4. 编译完成后下载 Artifact
+`Image.gz-dtb` 是内核镜像，不是完整的 Android `boot.img`。**不要直接执行下面的命令：**
 
-## Changelog
+```text
+fastboot flash boot Image.gz-dtb
+```
 
-### v1.0 (2026-06-09)
-- 首次发布
-- ReSukiSU v4.1.0 + SuSFS v2.1.00
-- 完整 BBR/FQ_CODEL/ipset/BBG/LZ4KD/NTSYNC/Docker 支持
-- 标准版 + 省电版双版本
-- OxygenOS Recovery 兼容签名
-- 完整 DTBO 支持（16 overlays, enchilada + fajita）
-- VBMeta Disable Verification 工具
+直接把裸内核镜像写入 `boot` 分区会破坏原有 ramdisk 和启动镜像结构，可能导致设备无法启动。
 
-## 许可证
+### Recovery 兼容性
 
-- 内核源码：GPL-2.0
-- AnyKernel3：MIT
-- vbmeta-disable-verification：Apache-2.0
+构建流程会对 ZIP 进行 `jarsigner` 签名，但临时测试密钥签名本身不能证明该 ZIP 一定兼容 OxygenOS 官方 Recovery。官方 Recovery、TWRP、OrangeFox 或其他 Recovery 的兼容性必须分别实测并记录。
+
+## 上游同步策略
+
+当前 Linux 4.19 社区参考上游：
+
+```text
+EdwinMoq/android_kernel_oneplus_sdm845
+branch: lineage-23.2-4.19
+```
+
+OnePlusOSS 与 LineageOS 的 OnePlus SDM845 官方/主流仓库主要基于 Linux 4.9。它们可以用于核对设备驱动和厂商修复，但不能直接覆盖当前 4.19 源码树。
+
+上游同步遵循以下原则：
+
+1. 只在源码仓库的独立同步分支中合并。
+2. 不直接覆盖 ReSukiSU、SuSFS、BBG、网络栈和设备调优改动。
+3. 先解决冲突，再完成 Standard 与 PowerSave 构建。
+4. 至少完成 Boot Verified 后才合入发布分支。
+5. 每次同步记录上游仓库、分支、提交 SHA 和冲突处理结果。
+
+详细状态见 [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)。
+
+## 发布命名
+
+建议统一使用：
+
+```text
+ABK-OnePlus6-enchilada-4.19-<variant>-<version>-<date>.zip
+```
+
+其中 `<variant>` 使用 `standard` 或 `powersave`。
+
+每个 Release 至少应包含：
+
+- 源码提交 SHA
+- 构建工作流运行记录
+- 工具链版本
+- SHA256 校验值
+- 设备与 ROM
+- 验证层级
+- 已知问题
+- 回滚方式
+
+## 安全说明
+
+- 本项目不会修改基带固件，但内核改动仍可能影响蜂窝、休眠、充电和设备稳定性。
+- 未经验证的内核不应作为唯一日用启动环境。
+- 不要把密钥、Token、账号信息或本机隐私路径提交到仓库。
+- 第三方脚本、Action 和二进制工具应固定版本并校验来源。
+
+## 许可证与致谢
+
+- Linux 内核源码：GPL-2.0
+- AnyKernel3：遵循其上游许可证
+- 其他补丁和工具：遵循各自上游许可证
+
+感谢 OnePlusOSS、LineageOS、EdwinMoq、ReSukiSU、SuSFS、AnyKernel3 及相关内核社区项目。
