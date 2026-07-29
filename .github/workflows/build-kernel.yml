@@ -40,10 +40,7 @@ jobs:
           set -euo pipefail
           case "${MODE}" in
             Standard|PowerSave) ;;
-            *)
-              echo "::error::Unsupported build mode: ${MODE}"
-              exit 1
-              ;;
+            *) echo "::error::Unsupported build mode: ${MODE}"; exit 1 ;;
           esac
 
       - name: 最大化构建空间
@@ -65,7 +62,7 @@ jobs:
             git build-essential bc flex bison libssl-dev libelf-dev \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             clang lld llvm python3 zip unzip cpio ccache \
-            device-tree-compiler libncurses-dev default-jdk-headless
+            device-tree-compiler libncurses-dev
 
       - name: 设置 ccache
         uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639 # v1.2
@@ -77,49 +74,38 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           SOURCE_SHA="$(git ls-remote "${KERNEL_SOURCE}.git" "refs/heads/${KERNEL_BRANCH}" | awk '{print $1}')"
-          if ! [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Unable to resolve ${KERNEL_SOURCE}:${KERNEL_BRANCH}"
-            exit 1
-          fi
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Unable to resolve kernel source"; exit 1; }
 
-          mkdir kernel
-          git -C kernel init
-          git -C kernel remote add origin "${KERNEL_SOURCE}.git"
-          git -C kernel fetch --depth=1 origin "${SOURCE_SHA}"
-          git -C kernel checkout --detach FETCH_HEAD
+          rm -rf "${GITHUB_WORKSPACE}/kernel"
+          mkdir "${GITHUB_WORKSPACE}/kernel"
+          git -C "${GITHUB_WORKSPACE}/kernel" init
+          git -C "${GITHUB_WORKSPACE}/kernel" remote add origin "${KERNEL_SOURCE}.git"
+          git -C "${GITHUB_WORKSPACE}/kernel" fetch --depth=1 origin "${SOURCE_SHA}"
+          git -C "${GITHUB_WORKSPACE}/kernel" checkout --detach FETCH_HEAD
+          test "$(git -C "${GITHUB_WORKSPACE}/kernel" rev-parse HEAD)" = "${SOURCE_SHA}"
 
-          CHECKED_OUT_SHA="$(git -C kernel rev-parse HEAD)"
-          if [ "${CHECKED_OUT_SHA}" != "${SOURCE_SHA}" ]; then
-            echo "::error::Kernel source SHA changed during checkout"
-            exit 1
-          fi
-
-          SOURCE_EPOCH="$(git -C kernel show -s --format=%ct HEAD)"
-          BUILD_TIMESTAMP="$(date -u -d "@${SOURCE_EPOCH}" '+%Y-%m-%d %H:%M:%S')"
-
+          SOURCE_EPOCH="$(git -C "${GITHUB_WORKSPACE}/kernel" show -s --format=%ct HEAD)"
           {
             echo "KERNEL_SOURCE_SHA=${SOURCE_SHA}"
             echo "KERNEL_SOURCE_SHORT=${SOURCE_SHA:0:12}"
             echo "SOURCE_DATE_EPOCH=${SOURCE_EPOCH}"
-            echo "KERNEL_BUILD_TIMESTAMP=${BUILD_TIMESTAMP}"
+            echo "KERNEL_BUILD_TIMESTAMP=$(date -u -d "@${SOURCE_EPOCH}" '+%Y-%m-%d %H:%M:%S')"
           } >> "${GITHUB_ENV}"
-
-          echo "Kernel source pinned to ${SOURCE_SHA}"
 
       - name: 应用 PowerSave 配置补丁
         if: inputs.mode == 'PowerSave'
         shell: bash
         run: |
           set -euo pipefail
-          patch --directory=kernel -p1 < scripts/powersave_defconfig.patch
-
+          PATCH_FILE="${GITHUB_WORKSPACE}/scripts/powersave_defconfig.patch"
+          test -s "${PATCH_FILE}"
+          patch --directory="${GITHUB_WORKSPACE}/kernel" -p1 < "${PATCH_FILE}"
           grep -E \
             "PM_WAKELOCKS_GC|PM_AUTOSLEEP|WQ_POWER|CPU_BOOST|CPU_FREQ_DEFAULT_GOV|STEP_WISE|ADRENO_TZ" \
-            kernel/arch/arm64/configs/vendor/enchilada_defconfig
+            "${GITHUB_WORKSPACE}/kernel/arch/arm64/configs/vendor/enchilada_defconfig"
 
-      - name: 下载固定版本 DTBO 打包工具
+      - name: 下载固定版本 DTBO 工具
         shell: bash
         run: |
           set -euo pipefail
@@ -127,14 +113,12 @@ jobs:
             "https://raw.githubusercontent.com/K-Blaaaack/mkdtboimg/${MKDTBOIMG_COMMIT}/mkdtboimg.py" \
             --output /tmp/mkdtboimg.py
           python3 -m py_compile /tmp/mkdtboimg.py
-          sha256sum /tmp/mkdtboimg.py
 
       - name: 编译内核与设备树
         shell: bash
         run: |
           set -euo pipefail
-          cd kernel
-
+          cd "${GITHUB_WORKSPACE}/kernel"
           export PATH="/usr/lib/ccache:${PATH}"
           export KBUILD_BUILD_USER=abk
           export KBUILD_BUILD_HOST=github-actions
@@ -143,23 +127,17 @@ jobs:
           export SOURCE_DATE_EPOCH
 
           MAKE_ARGS=(
-            O=out
-            ARCH=arm64
+            O=out ARCH=arm64
             CROSS_COMPILE=aarch64-linux-gnu-
             CLANG_TRIPLE=aarch64-linux-gnu-
-            "CC=ccache clang"
-            LD=ld.lld
-            AR=llvm-ar
-            NM=llvm-nm
-            OBJCOPY=llvm-objcopy
-            OBJDUMP=llvm-objdump
-            STRIP=llvm-strip
+            "CC=ccache clang" LD=ld.lld
+            AR=llvm-ar NM=llvm-nm
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
             LLVM=1
           )
 
           make "${MAKE_ARGS[@]}" "${DEFCONFIG}"
           make -j"$(nproc --all)" "${MAKE_ARGS[@]}" "DTC_FLAGS=-@" Image.gz-dtb dtbs
-
           test -s out/arch/arm64/boot/Image.gz-dtb
 
           DTBO_DIR=out/arch/arm64/boot/dts/qcom
@@ -168,104 +146,75 @@ jobs:
               \( -name 'enchilada*.dtbo' -o -name 'fajita*.dtbo' -o -name 'sdm845*overlay.dtbo' \) \
               -print | sort
           )
-
-          if [ "${#DTBO_FILES[@]}" -eq 0 ]; then
-            echo "::error::No compiled DTBO files were found"
-            exit 1
-          fi
-
-          printf '%s\n' "${DTBO_FILES[@]}" | tee DTBO_FILES.txt
+          [ "${#DTBO_FILES[@]}" -gt 0 ] || { echo "::error::No compiled DTBO files found"; exit 1; }
+          printf '%s\n' "${DTBO_FILES[@]}" > DTBO_FILES.txt
           python3 /tmp/mkdtboimg.py create dtbo.img "${DTBO_FILES[@]}"
           test -s dtbo.img
-
           echo "Compiled ${#DTBO_FILES[@]} DTBO overlays"
-          ls -lh out/arch/arm64/boot/Image.gz-dtb dtbo.img
           ccache --show-stats
 
       - name: 生成构建来源信息
         shell: bash
         run: |
           set -euo pipefail
-          cd kernel
-
-          CLANG_VERSION="$(clang --version | head -n 1)"
-          LLD_VERSION="$(ld.lld --version | head -n 1)"
-          GCC_VERSION="$(aarch64-linux-gnu-gcc --version | head -n 1)"
-          IMAGE_SHA256="$(sha256sum out/arch/arm64/boot/Image.gz-dtb | awk '{print $1}')"
-          DTBO_SHA256="$(sha256sum dtbo.img | awk '{print $1}')"
-          CONFIG_SHA256="$(sha256sum out/.config | awk '{print $1}')"
-          MKDTBOIMG_SHA256="$(sha256sum /tmp/mkdtboimg.py | awk '{print $1}')"
-          POWERSAVE_PATCH_SHA256="not-applied"
-
-          if [ "${MODE}" = "PowerSave" ]; then
+          cd "${GITHUB_WORKSPACE}/kernel"
+          POWERSAVE_PATCH_SHA256=not-applied
+          if [ "${MODE}" = PowerSave ]; then
             POWERSAVE_PATCH_SHA256="$(sha256sum "${GITHUB_WORKSPACE}/scripts/powersave_defconfig.patch" | awk '{print $1}')"
           fi
 
-          cat > BUILD_INFO.txt << EOF
-          project=ABK OnePlus 6 Kernel
-          device=OnePlus 6
-          codename=enchilada
-          mode=${MODE}
-          kernel_source=${KERNEL_SOURCE}
-          kernel_branch=${KERNEL_BRANCH}
-          kernel_source_sha=${KERNEL_SOURCE_SHA}
-          build_repository=${GITHUB_REPOSITORY}
-          build_repository_sha=${GITHUB_SHA}
-          workflow_run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-          runner_os=${RUNNER_OS}
-          runner_arch=${RUNNER_ARCH}
-          runner_image_os=${ImageOS:-unknown}
-          runner_image_version=${ImageVersion:-unknown}
-          build_timestamp_utc=${KERNEL_BUILD_TIMESTAMP}
-          source_date_epoch=${SOURCE_DATE_EPOCH}
-          clang=${CLANG_VERSION}
-          lld=${LLD_VERSION}
-          cross_gcc=${GCC_VERSION}
-          anykernel_repository=${ANYKERNEL_REPOSITORY}
-          anykernel_commit=${ANYKERNEL_COMMIT}
-          mkdtboimg_commit=${MKDTBOIMG_COMMIT}
-          mkdtboimg_sha256=${MKDTBOIMG_SHA256}
-          powersave_patch_sha256=${POWERSAVE_PATCH_SHA256}
-          image_gz_dtb_sha256=${IMAGE_SHA256}
-          dtbo_img_sha256=${DTBO_SHA256}
-          config_sha256=${CONFIG_SHA256}
-          EOF
+          {
+            echo "project=ABK OnePlus 6 Kernel"
+            echo "device=OnePlus 6"
+            echo "codename=enchilada"
+            echo "mode=${MODE}"
+            echo "kernel_source=${KERNEL_SOURCE}"
+            echo "kernel_branch=${KERNEL_BRANCH}"
+            echo "kernel_source_sha=${KERNEL_SOURCE_SHA}"
+            echo "build_repository=${GITHUB_REPOSITORY}"
+            echo "build_repository_sha=${GITHUB_SHA}"
+            echo "workflow_run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "runner_image_os=${ImageOS:-unknown}"
+            echo "runner_image_version=${ImageVersion:-unknown}"
+            echo "build_timestamp_utc=${KERNEL_BUILD_TIMESTAMP}"
+            echo "clang=$(clang --version | head -n 1)"
+            echo "lld=$(ld.lld --version | head -n 1)"
+            echo "cross_gcc=$(aarch64-linux-gnu-gcc --version | head -n 1)"
+            echo "anykernel_commit=${ANYKERNEL_COMMIT}"
+            echo "mkdtboimg_commit=${MKDTBOIMG_COMMIT}"
+            echo "mkdtboimg_sha256=$(sha256sum /tmp/mkdtboimg.py | awk '{print $1}')"
+            echo "powersave_patch_sha256=${POWERSAVE_PATCH_SHA256}"
+            echo "image_gz_dtb_sha256=$(sha256sum out/arch/arm64/boot/Image.gz-dtb | awk '{print $1}')"
+            echo "dtbo_img_sha256=$(sha256sum dtbo.img | awk '{print $1}')"
+            echo "config_sha256=$(sha256sum out/.config | awk '{print $1}')"
+          } > BUILD_INFO.txt
 
-          sed -i 's/^          //' BUILD_INFO.txt
           cp out/.config kernel.config
           sha256sum BUILD_INFO.txt kernel.config DTBO_FILES.txt > BUILD_METADATA.sha256
-          cat BUILD_INFO.txt
 
       - name: 打包 AnyKernel3
         shell: bash
         run: |
           set -euo pipefail
-          cd kernel
-
+          cd "${GITHUB_WORKSPACE}/kernel"
+          rm -rf AnyKernel3
           mkdir AnyKernel3
           git -C AnyKernel3 init
           git -C AnyKernel3 remote add origin "${ANYKERNEL_REPOSITORY}"
           git -C AnyKernel3 fetch --depth=1 origin "${ANYKERNEL_COMMIT}"
           git -C AnyKernel3 checkout --detach FETCH_HEAD
-
-          if [ "$(git -C AnyKernel3 rev-parse HEAD)" != "${ANYKERNEL_COMMIT}" ]; then
-            echo "::error::AnyKernel3 checkout did not match the pinned commit"
-            exit 1
-          fi
-
+          test "$(git -C AnyKernel3 rev-parse HEAD)" = "${ANYKERNEL_COMMIT}"
           rm -rf AnyKernel3/.git AnyKernel3/.github
           rm -f AnyKernel3/tools/snapshotupdater_static
 
           cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
           cp dtbo.img AnyKernel3/dtbo.img
-          cp BUILD_INFO.txt AnyKernel3/BUILD_INFO.txt
-          cp DTBO_FILES.txt AnyKernel3/DTBO_FILES.txt
+          cp BUILD_INFO.txt DTBO_FILES.txt AnyKernel3/
 
           KERNEL_DESC="ABK OnePlus 6 ${MODE} ReSukiSU + SuSFS 2.1.00 (${KERNEL_SOURCE_SHORT})"
           cat > AnyKernel3/anykernel.sh << EOF
           ### AnyKernel3 Ramdisk Mod Script
           ## osm0sis @ xda-developers
-
           properties() { '
           kernel.string=${KERNEL_DESC}
           do.devicecheck=1
@@ -280,34 +229,22 @@ jobs:
           supported.patchlevels=
           supported.vendorpatchlevels=
           '; }
-
           BLOCK=boot;
           IS_SLOT_DEVICE=auto;
           RAMDISK_COMPRESSION=auto;
           PATCH_VBMETA_FLAG=auto;
-
           . tools/ak3-core.sh;
-
           dump_boot;
           write_boot;
           EOF
           sed -i 's/^          //' AnyKernel3/anykernel.sh
 
-          KERNEL_NAME="ABK_OnePlus6_ReSukiSU_SuSFS210_${MODE}_${KERNEL_SOURCE_SHORT}"
-          ZIP_NAME="${KERNEL_NAME}_$(date -u '+%Y%m%d-%H%M').zip"
-
-          (
-            cd AnyKernel3
-            zip -r9 "../${ZIP_NAME}" .
-          )
-
-          unzip -l "${ZIP_NAME}" | grep -E \
-            'Image.gz-dtb|dtbo.img|anykernel.sh|BUILD_INFO.txt|tools/ak3-core.sh'
-
+          ZIP_NAME="ABK_OnePlus6_ReSukiSU_SuSFS210_${MODE}_${KERNEL_SOURCE_SHORT}_$(date -u '+%Y%m%d-%H%M').zip"
+          (cd AnyKernel3 && zip -r9 "../${ZIP_NAME}" .)
+          unzip -l "${ZIP_NAME}" | grep -E 'Image.gz-dtb|dtbo.img|anykernel.sh|BUILD_INFO.txt|tools/ak3-core.sh'
           sha256sum "${ZIP_NAME}" > "${ZIP_NAME}.sha256"
           echo "ARTIFACT_NAME=${ZIP_NAME%.zip}" >> "${GITHUB_ENV}"
           echo "ZIP_NAME=${ZIP_NAME}" >> "${GITHUB_ENV}"
-          ls -lh "${ZIP_NAME}" "${ZIP_NAME}.sha256"
 
       - name: 生成构建摘要
         shell: bash
@@ -318,11 +255,10 @@ jobs:
             echo
             echo "- Mode: \`${MODE}\`"
             echo "- Kernel source SHA: \`${KERNEL_SOURCE_SHA}\`"
-            echo "- AnyKernel3 SHA: \`${ANYKERNEL_COMMIT}\`"
             echo "- Artifact: \`${ZIP_NAME}\`"
-            echo "- SHA256: \`$(awk '{print $1}' "kernel/${ZIP_NAME}.sha256")\`"
+            echo "- SHA256: \`$(awk '{print $1}' "${GITHUB_WORKSPACE}/kernel/${ZIP_NAME}.sha256")\`"
             echo
-            echo "This is Build Verified only. Boot and runtime validation are still required."
+            echo "Build Verified only; Boot and Runtime verification remain required."
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: 上传 Artifact
