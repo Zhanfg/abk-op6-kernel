@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+    <!--
+      Active OnePlus 6 bring-up layer for an OFFICIAL AOSP 17 checkout.
+      The base manifest must be android.googlesource.com/platform/manifest at
+      android-17.0.0_r1. Evolution X / Lineage are NOT the product base.
+    -->
+
+    <remote name="zhanfg" fetch="https://github.com/Zhanfg/" />
+
+    <project
+        name="android_device_oneplus_enchilada"
+        path="device/oneplus/enchilada"
+        remote="zhanfg"
+        revision="bringup/aosp17" />
+
+    <project
+        name="android_device_oneplus_sdm845-common"
+        path="device/oneplus/sdm845-common"
+        remote="zhanfg"
+        revision="bringup/aosp17" />
+
+    <project
+        name="android_hardware_oneplus"
+        path="hardware/oneplus"
+        remote="zhanfg"
+        revision="bringup/aosp17" />
+
+    <!-- Current blob baseline. These are temporary generated-vendor donors;
+         later replace with vendor trees generated from one pinned OOS image. -->
+    <project
+        name="proprietary_vendor_oneplus_enchilada"
+        path="vendor/oneplus/enchilada"
+        remote="zhanfg"
+        revision="lineage-22.2" />
+
+    <project
+        name="proprietary_vendor_oneplus_sdm845-common"
+        path="vendor/oneplus/sdm845-common"
+        remote="zhanfg"
+        revision="lineage-22.2" />
+
+    <!-- Stage-0 boot kernel only. This provides known-good hardware behavior
+         while the independent GKI 5.15 port is developed in the kernel workspace. -->
+    <project
+        name="android_kernel_oneplus_sdm845"
+        path="kernel/oneplus/sdm845"
+        remote="zhanfg"
+        revision="lineage-23.2-4.19" />
+</manifest>

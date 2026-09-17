@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+    <!--
+      TEMPORARY COMPILE/HARDWARE BRIDGE for SDM845 legacy vendor userspace.
+
+      This is deliberately separate from the AOSP/product identity layer.
+      Nothing here should be treated as a ROM branding/framework dependency.
+      The long-term plan is to eliminate these Lineage-maintained CAF bridge
+      repositories as the SDM845 HAL/driver stack is modernized.
+    -->
+
+    <remote name="lineage-qcom" fetch="https://github.com/LineageOS/" />
+
+    <!-- CAF pickup glue. Only link the legacy paths required by this device. -->
+    <project
+        name="android_hardware_qcom-caf_common"
+        path="hardware/qcom-caf/common"
+        remote="lineage-qcom"
+        revision="lineage-24.0">
+        <linkfile src="os_pickup_aosp.mk" dest="hardware/qcom/Android.mk" />
+        <linkfile src="os_pickup_sepolicy_vndr.mk" dest="device/qcom/sepolicy_vndr/SEPolicy.mk" />
+        <linkfile src="os_pickup.bp" dest="hardware/qcom-caf/msm8996/Android.bp" />
+        <linkfile src="os_pickup.mk" dest="hardware/qcom-caf/msm8996/Android.mk" />
+    </project>
+
+    <!-- Legacy UM policy used while proprietary OOS HALs are retained. -->
+    <project
+        name="android_device_qcom_sepolicy"
+        path="device/qcom/sepolicy-legacy-um"
+        remote="lineage-qcom"
+        revision="lineage-24.0-legacy-um" />
+    <project
+        name="android_device_qcom_sepolicy_vndr"
+        path="device/qcom/sepolicy_vndr/legacy-um"
+        remote="lineage-qcom"
+        revision="lineage-24.0-legacy-um" />
+
+    <!-- Old Qualcomm audio/display/media implementation used by the current
+         SDM845 vendor stack. These are bridge components, not ROM identity. -->
+    <project
+        name="android_hardware_qcom_audio"
+        path="hardware/qcom-caf/msm8996/audio"
+        remote="lineage-qcom"
+        revision="lineage-22.2-caf-msm8996" />
+    <project
+        name="android_hardware_qcom_display"
+        path="hardware/qcom-caf/msm8996/display"
+        remote="lineage-qcom"
+        revision="lineage-22.2-caf-msm8996" />
+    <project
+        name="android_hardware_qcom_media"
+        path="hardware/qcom-caf/msm8996/media"
+        remote="lineage-qcom"
+        revision="lineage-22.2-caf-msm8996" />
+
+    <project
+        name="android_hardware_qcom_bootctrl"
+        path="hardware/qcom-caf/bootctrl"
+        remote="lineage-qcom"
+        revision="lineage-24.0-caf" />
+    <project
+        name="android_hardware_qcom_thermal"
+        path="hardware/qcom-caf/thermal-legacy-um"
+        remote="lineage-qcom"
+        revision="lineage-24.0-legacy-um" />
+    <project
+        name="android_hardware_qcom_wlan"
+        path="hardware/qcom-caf/wlan"
+        remote="lineage-qcom"
+        revision="lineage-24.0-caf" />
+
+    <!-- Qualcomm framework/HAL support still referenced by the current
+         proprietary userspace. Pin explicitly so AOSP's default tag is never
+         accidentally applied to a Lineage repository. -->
+    <project name="android_external_ant-wireless_hidl" path="external/ant-wireless/hidl" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_external_json-c" path="external/json-c" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_codeaurora_telephony" path="vendor/codeaurora/telephony" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_audio-commonsys-intf" path="vendor/qcom/opensource/commonsys-intf/audio" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_display-commonsys-intf" path="vendor/qcom/opensource/commonsys-intf/display" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_audio" path="vendor/qcom/opensource/commonsys/audio" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_display-commonsys" path="vendor/qcom/opensource/commonsys/display" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_core-utils-sys" path="vendor/qcom/opensource/core-utils-sys" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_core-utils-vendor" path="vendor/qcom/opensource/core-utils-vendor" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_dataservices" path="vendor/qcom/opensource/dataservices" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_display" path="vendor/qcom/opensource/display" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_healthd-ext" path="vendor/qcom/opensource/healthd-ext" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_interfaces" path="vendor/qcom/opensource/interfaces" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_power" path="vendor/qcom/opensource/power" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_thermal-engine" path="vendor/qcom/opensource/thermal-engine" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_usb" path="vendor/qcom/opensource/usb" remote="lineage-qcom" revision="lineage-24.0" />
+    <project name="android_vendor_qcom_opensource_vibrator" path="vendor/qcom/opensource/vibrator" remote="lineage-qcom" revision="lineage-24.0" />
+</manifest>
