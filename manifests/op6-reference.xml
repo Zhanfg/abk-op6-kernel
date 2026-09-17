@@ -2,50 +2,58 @@
 <manifest>
     <!--
       Reference-only sources for the clean AOSP 17 OP6 bring-up.
-      These are intentionally checked out under reference/ so they cannot
-      become accidental build dependencies of the final ROM.
+      `notdefault` keeps these out of a normal repo sync. Sync a reference path
+      explicitly when a porting comparison is needed.
     -->
 
     <remote name="github-ref" fetch="https://github.com/" />
 
-    <!-- Current Lineage device implementation: hardware facts/reference only. -->
     <project
         name="LineageOS/android_device_oneplus_enchilada"
         path="reference/lineage/device/oneplus/enchilada"
         remote="github-ref"
-        revision="lineage-23.2" />
+        revision="lineage-23.2"
+        groups="notdefault,reference" />
 
     <project
         name="LineageOS/android_device_oneplus_sdm845-common"
         path="reference/lineage/device/oneplus/sdm845-common"
         remote="github-ref"
-        revision="lineage-23.2" />
+        revision="lineage-23.2"
+        groups="notdefault,reference" />
 
-    <!-- Known-good 4.19 Android hardware behavior reference. -->
     <project
         name="EdwinMoq/android_kernel_oneplus_sdm845"
         path="reference/kernel/edwin-oneplus-sdm845-4.19"
         remote="github-ref"
-        revision="lineage-23.2-4.19" />
+        revision="lineage-23.2-4.19"
+        groups="notdefault,reference" />
 
-    <!-- OnePlus official historical 4.9 source. -->
     <project
         name="OnePlusOSS/android_kernel_oneplus_sdm845"
         path="reference/kernel/oneplusoss-sdm845-4.9"
         remote="github-ref"
-        revision="oneplus/SDM845_O_8.1" />
+        revision="oneplus/SDM845_O_8.1"
+        groups="notdefault,reference" />
 
-    <!-- Proprietary blob trees are references only; authoritative vendor trees
-         will eventually be generated from a pinned OOS firmware baseline. -->
     <project
         name="TheMuppets/proprietary_vendor_oneplus_enchilada"
         path="reference/vendor/oneplus/enchilada"
         remote="github-ref"
-        revision="lineage-22.2" />
+        revision="lineage-22.2"
+        groups="notdefault,reference" />
 
     <project
         name="TheMuppets/proprietary_vendor_oneplus_sdm845-common"
         path="reference/vendor/oneplus/sdm845-common"
         remote="github-ref"
-        revision="lineage-22.2" />
+        revision="lineage-22.2"
+        groups="notdefault,reference" />
+
+    <!-- Evolution X is a feature donor only. It never occupies active AOSP paths. -->
+    <project name="Evolution-X/frameworks_base" path="reference/evox/frameworks_base" remote="github-ref" revision="cnb" groups="notdefault,reference,evox-donor" />
+    <project name="Evolution-X/packages_apps_Settings" path="reference/evox/packages_apps_Settings" remote="github-ref" revision="cnb" groups="notdefault,reference,evox-donor" />
+    <project name="Evolution-X/packages_apps_Evolver" path="reference/evox/packages_apps_Evolver" remote="github-ref" revision="cnb" groups="notdefault,reference,evox-donor" />
+    <project name="Evolution-X/vendor_evolution" path="reference/evox/vendor_evolution" remote="github-ref" revision="cnb" groups="notdefault,reference,evox-donor" />
+    <project name="Evolution-X/manifest" path="reference/evox/manifest" remote="github-ref" revision="cnb" groups="notdefault,reference,evox-donor" />
 </manifest>
