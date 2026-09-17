@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+    <!--
+      Reference-only sources for the clean AOSP 17 OP6 bring-up.
+      These are intentionally checked out under reference/ so they cannot
+      become accidental build dependencies of the final ROM.
+    -->
+
+    <remote name="github-ref" fetch="https://github.com/" />
+
+    <!-- Current Lineage device implementation: hardware facts/reference only. -->
+    <project
+        name="LineageOS/android_device_oneplus_enchilada"
+        path="reference/lineage/device/oneplus/enchilada"
+        remote="github-ref"
+        revision="lineage-23.2" />
+
+    <project
+        name="LineageOS/android_device_oneplus_sdm845-common"
+        path="reference/lineage/device/oneplus/sdm845-common"
+        remote="github-ref"
+        revision="lineage-23.2" />
+
+    <!-- Known-good 4.19 Android hardware behavior reference. -->
+    <project
+        name="EdwinMoq/android_kernel_oneplus_sdm845"
+        path="reference/kernel/edwin-oneplus-sdm845-4.19"
+        remote="github-ref"
+        revision="lineage-23.2-4.19" />
+
+    <!-- OnePlus official historical 4.9 source. -->
+    <project
+        name="OnePlusOSS/android_kernel_oneplus_sdm845"
+        path="reference/kernel/oneplusoss-sdm845-4.9"
+        remote="github-ref"
+        revision="oneplus/SDM845_O_8.1" />
+
+    <!-- Proprietary blob trees are references only; authoritative vendor trees
+         will eventually be generated from a pinned OOS firmware baseline. -->
+    <project
+        name="TheMuppets/proprietary_vendor_oneplus_enchilada"
+        path="reference/vendor/oneplus/enchilada"
+        remote="github-ref"
+        revision="lineage-22.2" />
+
+    <project
+        name="TheMuppets/proprietary_vendor_oneplus_sdm845-common"
+        path="reference/vendor/oneplus/sdm845-common"
+        remote="github-ref"
+        revision="lineage-22.2" />
+</manifest>
