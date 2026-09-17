@@ -13,11 +13,13 @@ yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
 
 printf '==> AOSP root: %s\n' "$AOSP_ROOT"
 
-ACTIVE_FILES=(
+# These product-facing files must not carry a Lineage runtime identity at all.
+# aosp-common.mk is intentionally not in this list because it contains the
+# *negative filter list* naming the legacy modules that must be excluded.
+ACTIVE_IDENTITY_FILES=(
   "device/oneplus/enchilada/AndroidProducts.mk"
   "device/oneplus/enchilada/aosp_enchilada.mk"
   "device/oneplus/enchilada/device.mk"
-  "device/oneplus/sdm845-common/aosp-common.mk"
   "device/oneplus/sdm845-common/BoardConfigCommon.mk"
   "device/oneplus/sdm845-common/manifest.xml"
   "device/oneplus/sdm845-common/system.prop"
@@ -26,8 +28,8 @@ ACTIVE_FILES=(
   "device/oneplus/sdm845-common/vendor.prop"
 )
 
-printf '\n==> Checking product-facing configuration\n'
-for rel in "${ACTIVE_FILES[@]}"; do
+printf '\n==> Checking product-facing identity configuration\n'
+for rel in "${ACTIVE_IDENTITY_FILES[@]}"; do
   f="$AOSP_ROOT/$rel"
   [[ -f "$f" ]] || { yellow "WARN missing: $rel"; continue; }
   if grep -nEI "$RUNTIME_RE" "$f"; then
@@ -35,6 +37,29 @@ for rel in "${ACTIVE_FILES[@]}"; do
     FAIL=1
   fi
 done
+
+printf '\n==> Verifying AOSP wrapper exclusions\n'
+WRAPPER="$AOSP_ROOT/device/oneplus/sdm845-common/aosp-common.mk"
+if [[ ! -f "$WRAPPER" ]]; then
+  red 'FAIL missing device/oneplus/sdm845-common/aosp-common.mk'
+  FAIL=1
+else
+  for module in \
+    vendor.lineage.health-service.default \
+    vendor.lineage.livedisplay-service.oneplus \
+    vendor.lineage.livedisplay-service.oneplus_sdm845 \
+    vendor.lineage.touch-service.oneplus \
+    OnePlusDoze OnePlusDiracGef KeyHandler; do
+    if ! grep -Fq "$module" "$WRAPPER"; then
+      red "FAIL wrapper no longer excludes: $module"
+      FAIL=1
+    fi
+  done
+  if ! grep -Fq 'overlay-lineage' "$WRAPPER"; then
+    red 'FAIL wrapper no longer excludes overlay-lineage'
+    FAIL=1
+  fi
+fi
 
 printf '\n==> Checking build-enabled Android.bp/Android.mk files\n'
 # Donor-only directories intentionally retain historical source. Their build
@@ -75,7 +100,7 @@ if [[ -d "$PRODUCT_OUT" ]]; then
     FAIL=1
   fi
 
-  if find "$PRODUCT_OUT" -type f -o -type l | grep -Ei '/[^/]*(lineage|org\.lineageos|vendor\.lineage)[^/]*$'; then
+  if find "$PRODUCT_OUT" \( -type f -o -type l \) | grep -Ei '/[^/]*(lineage|org\.lineageos|vendor\.lineage)[^/]*$'; then
     red 'FAIL Lineage-named files found in built product'
     FAIL=1
   fi
