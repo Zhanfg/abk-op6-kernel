@@ -1,0 +1,184 @@
+name: Build ReSukiSU GKI 5.15
+
+on:
+  push:
+    branches:
+      - prep/android17-gki-rom
+    paths:
+      - '.github/workflows/op6-gki515-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: op6-gki515-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KERNEL_MANIFEST: https://android.googlesource.com/kernel/manifest
+  KERNEL_BRANCH: common-android14-5.15-2026-07
+  RESUKISU_REPO: https://github.com/Zhanfg/ReSukiSU.git
+  RESUKISU_BRANCH: main
+
+jobs:
+  build:
+    name: gki-5.15-arm64-resukisu
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 4096
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      - name: Install host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             git curl ca-certificates python3 bc bison flex build-essential             libssl-dev libelf-dev libncurses-dev dwarves rsync cpio xz-utils             zstd lz4
+          mkdir -p "$HOME/bin"
+          curl --fail --location --retry 3             https://storage.googleapis.com/git-repo-downloads/repo             --output "$HOME/bin/repo"
+          chmod +x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Sync Android 14 / 5.15 GKI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/gki"
+          cd "$GITHUB_WORKSPACE/gki"
+          repo init -u "$KERNEL_MANIFEST" -b "$KERNEL_BRANCH" --depth=1
+          repo sync -c --no-tags --no-clone-bundle -j"$(nproc --all)"
+          repo manifest -r -o "$GITHUB_WORKSPACE/GKI_PINNED_MANIFEST.xml"
+
+          COMMON_SHA="$(git -C common rev-parse HEAD)"
+          [[ "$COMMON_SHA" =~ ^[0-9a-f]{40}$ ]]
+          echo "GKI_COMMON_SHA=$COMMON_SHA" >> "$GITHUB_ENV"
+
+      - name: Integrate pinned ReSukiSU source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/gki"
+
+          RESUKISU_SHA="$(git ls-remote "$RESUKISU_REPO" "refs/heads/$RESUKISU_BRANCH" | awk '{print $1}')"
+          [[ "$RESUKISU_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::Unable to resolve ReSukiSU branch"; exit 1;
+          }
+
+          git init KernelSU
+          git -C KernelSU remote add origin "$RESUKISU_REPO"
+          git -C KernelSU fetch --depth=1 origin "$RESUKISU_SHA"
+          git -C KernelSU checkout --detach FETCH_HEAD
+          test "$(git -C KernelSU rev-parse HEAD)" = "$RESUKISU_SHA"
+          echo "RESUKISU_SHA=$RESUKISU_SHA" >> "$GITHUB_ENV"
+
+          test -d common/drivers
+          test -f common/drivers/Makefile
+          test -f common/drivers/Kconfig
+          test -d KernelSU/kernel
+
+          ln -s ../../KernelSU/kernel common/drivers/kernelsu
+          printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> common/drivers/Makefile
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("common/drivers/Kconfig")
+          s = p.read_text()
+          needle = 'source "drivers/kernelsu/Kconfig"'
+          if needle not in s:
+              idx = s.find("endmenu")
+              if idx < 0:
+                  raise SystemExit("common/drivers/Kconfig has no endmenu insertion point")
+              s = s[:idx] + needle + "\n\n" + s[idx:]
+              p.write_text(s)
+          PY
+
+      - name: Configure ReSukiSU GKI2 LKM mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/gki"
+          DEFCONFIG=common/arch/arm64/configs/gki_defconfig
+
+          common/scripts/config --file "$DEFCONFIG"             -m KSU             -e KSU_TRACEPOINT_HOOK             -e KSU_MULTI_MANAGER_SUPPORT             -d KSU_MANUAL_HOOK             -d KSU_SUSFS
+
+          grep -E '^CONFIG_KSU(=|_)' "$DEFCONFIG"
+
+      - name: Build arm64 GKI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/gki"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+
+          BUILD_CONFIG=common/build.config.gki.aarch64           DIST_DIR="$GITHUB_WORKSPACE/dist"           build/build.sh -j"$(nproc --all)"
+
+          test -s "$GITHUB_WORKSPACE/dist/Image"
+          test -s "$GITHUB_WORKSPACE/dist/vmlinux.symvers"
+          test -s "$GITHUB_WORKSPACE/dist/modules.builtin"
+          test -s "$GITHUB_WORKSPACE/dist/modules.builtin.modinfo"
+
+          KSU_KO="$(find "$GITHUB_WORKSPACE" -type f -name kernelsu.ko -print -quit)"
+          test -n "$KSU_KO"
+          cp "$KSU_KO" "$GITHUB_WORKSPACE/dist/kernelsu.ko"
+
+      - name: Record build provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          {
+            echo "project=OnePlus 6 GKI bring-up"
+            echo "status=BUILD_ONLY_NOT_FLASHABLE"
+            echo "kernel_manifest=$KERNEL_MANIFEST"
+            echo "kernel_branch=$KERNEL_BRANCH"
+            echo "kernel_common_sha=$GKI_COMMON_SHA"
+            echo "resukisu_repo=$RESUKISU_REPO"
+            echo "resukisu_sha=$RESUKISU_SHA"
+            echo "config=CONFIG_KSU=m CONFIG_KSU_TRACEPOINT_HOOK=y"
+            echo "workflow=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "image_sha256=$(sha256sum dist/Image | awk '{print $1}')"
+            echo "kernelsu_ko_sha256=$(sha256sum dist/kernelsu.ko | awk '{print $1}')"
+          } > GKI_BUILD_INFO.txt
+
+          sha256sum             dist/Image             dist/kernelsu.ko             dist/vmlinux.symvers             GKI_PINNED_MANIFEST.xml             GKI_BUILD_INFO.txt             > GKI_BUILD_SHA256SUMS.txt
+
+      - name: Build summary
+        shell: bash
+        run: |
+          {
+            echo '# ReSukiSU GKI 5.15 build'
+            echo
+            echo "- ACK branch: `$KERNEL_BRANCH`"
+            echo "- kernel/common: `$GKI_COMMON_SHA`"
+            echo "- ReSukiSU: `$RESUKISU_SHA`"
+            echo '- Mode: `CONFIG_KSU=m + CONFIG_KSU_TRACEPOINT_HOOK=y`'
+            echo
+            echo '> BUILD ONLY. This is not an OnePlus 6 flashable boot image yet.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload GKI build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: OP6-GKI515-ReSukiSU-${{ env.GKI_COMMON_SHA }}
+          path: |
+            dist/Image
+            dist/kernelsu.ko
+            dist/vmlinux.symvers
+            dist/modules.builtin
+            dist/modules.builtin.modinfo
+            GKI_PINNED_MANIFEST.xml
+            GKI_BUILD_INFO.txt
+            GKI_BUILD_SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 14
