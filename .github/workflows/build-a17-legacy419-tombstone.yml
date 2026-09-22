@@ -32,6 +32,15 @@ jobs:
           grep -Fq '.name = "cgroup.freeze"' kernel/kernel/cgroup/cgroup.c
           grep -Fq 'static ssize_t memory_reclaim(' kernel/mm/memcontrol.c
           grep -Fq '.name = "reclaim"' kernel/mm/memcontrol.c
+          grep -Fq 'CONFIG_REKERNEL=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_REKERNEL_NETWORK=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          test -s kernel/drivers/rekernel/rekernel.c
+          grep -Fq 'OP6 Re:Kernel frozen-app notification path' kernel/drivers/android/binder.c
+          grep -Fq 'BINDER_FREEZE' kernel/include/uapi/linux/android/binder.h
+          grep -Fq 'BINDER_GET_FROZEN_INFO' kernel/include/uapi/linux/android/binder.h
+          grep -Fq 'BR_FROZEN_REPLY' kernel/include/uapi/linux/android/binder.h
+          grep -Fq 'binder_txns_pending_ilocked' kernel/drivers/android/binder.c
+          grep -Fq 'init_waitqueue_head(&proc->freeze_wait)' kernel/drivers/android/binder.c
 
   build:
     needs: source-gate
