@@ -41,6 +41,8 @@ jobs:
           grep -Fq 'BR_FROZEN_REPLY' kernel/include/uapi/linux/android/binder.h
           grep -Fq 'binder_txns_pending_ilocked' kernel/drivers/android/binder.c
           grep -Fq 'init_waitqueue_head(&proc->freeze_wait)' kernel/drivers/android/binder.c
+          grep -Fq 'swappiness=200' kernel/mm/memcontrol.c
+          grep -Fq 'proactive_swappiness' kernel/mm/vmscan.c
 
   build:
     needs: source-gate
