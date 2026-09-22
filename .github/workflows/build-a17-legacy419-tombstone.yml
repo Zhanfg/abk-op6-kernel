@@ -1,0 +1,41 @@
+name: Build A17 Legacy 4.19 Native Tombstone
+
+on:
+  push:
+    branches:
+      - prep/android17-gki-rom
+    paths:
+      - '.github/workflows/build-a17-legacy419-tombstone.yml'
+      - '.github/workflows/build-kernel.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-a17-legacy419-tombstone.yml'
+      - '.github/workflows/build-kernel.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Audit freezer/reclaim support
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth=1 --branch feature/tombstone-native-4.19             https://github.com/Zhanfg/kernel_oneplus_sdm845.git kernel
+          grep -Fq 'CONFIG_CGROUP_FREEZER=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_MEMCG=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_MEMCG_SWAP=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq '.name = "cgroup.freeze"' kernel/kernel/cgroup/cgroup.c
+          grep -Fq 'static ssize_t memory_reclaim(' kernel/mm/memcontrol.c
+          grep -Fq '.name = "reclaim"' kernel/mm/memcontrol.c
+
+  build:
+    needs: source-gate
+    uses: ./.github/workflows/build-kernel.yml
+    with:
+      mode: Standard
+      kernel_branch: feature/tombstone-native-4.19
