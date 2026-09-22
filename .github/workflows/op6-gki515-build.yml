@@ -20,10 +20,12 @@ env:
   KERNEL_BRANCH: common-android14-5.15-2026-07
   RESUKISU_REPO: https://github.com/Zhanfg/ReSukiSU.git
   RESUKISU_BRANCH: main
+  KMI: android14-5.15
+  DDK_RELEASE: '20260828'
 
 jobs:
-  build:
-    name: gki-5.15-arm64-resukisu
+  gki:
+    name: build-gki-5.15-arm64
     runs-on: ubuntu-22.04
     timeout-minutes: 180
 
@@ -43,9 +45,14 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends             git curl ca-certificates python3 bc bison flex build-essential             libssl-dev libelf-dev libncurses-dev dwarves rsync cpio xz-utils             zstd lz4
+          sudo apt-get install -y --no-install-recommends \
+            git curl ca-certificates python3 bc bison flex build-essential \
+            libssl-dev libelf-dev libncurses-dev dwarves rsync cpio xz-utils \
+            zstd lz4
           mkdir -p "$HOME/bin"
-          curl --fail --location --retry 3             https://storage.googleapis.com/git-repo-downloads/repo             --output "$HOME/bin/repo"
+          curl --fail --location --retry 3 \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            --output "$HOME/bin/repo"
           chmod +x "$HOME/bin/repo"
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
@@ -63,75 +70,32 @@ jobs:
           [[ "$COMMON_SHA" =~ ^[0-9a-f]{40}$ ]]
           echo "GKI_COMMON_SHA=$COMMON_SHA" >> "$GITHUB_ENV"
 
-      - name: Integrate pinned ReSukiSU source
+      - name: Build arm64 GKI with Kleaf
         shell: bash
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/gki"
 
-          RESUKISU_SHA="$(git ls-remote "$RESUKISU_REPO" "refs/heads/$RESUKISU_BRANCH" | awk '{print $1}')"
-          [[ "$RESUKISU_SHA" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "::error::Unable to resolve ReSukiSU branch"; exit 1;
-          }
+          # Modern android14-5.15 manifests use Kleaf. The dist target places
+          # the canonical GKI distribution under out/kernel_aarch64/dist.
+          tools/bazel run --config=fast //common:kernel_aarch64_dist
 
-          git init KernelSU
-          git -C KernelSU remote add origin "$RESUKISU_REPO"
-          git -C KernelSU fetch --depth=1 origin "$RESUKISU_SHA"
-          git -C KernelSU checkout --detach FETCH_HEAD
-          test "$(git -C KernelSU rev-parse HEAD)" = "$RESUKISU_SHA"
-          echo "RESUKISU_SHA=$RESUKISU_SHA" >> "$GITHUB_ENV"
+          DIST="$GITHUB_WORKSPACE/gki/out/kernel_aarch64/dist"
+          test -s "$DIST/Image"
+          test -s "$DIST/vmlinux.symvers"
+          test -s "$DIST/modules.builtin"
+          test -s "$DIST/modules.builtin.modinfo"
 
-          test -d common/drivers
-          test -f common/drivers/Makefile
-          test -f common/drivers/Kconfig
-          test -d KernelSU/kernel
+          mkdir -p "$GITHUB_WORKSPACE/gki-dist"
+          cp "$DIST/Image" "$GITHUB_WORKSPACE/gki-dist/"
+          cp "$DIST/vmlinux.symvers" "$GITHUB_WORKSPACE/gki-dist/"
+          cp "$DIST/modules.builtin" "$GITHUB_WORKSPACE/gki-dist/"
+          cp "$DIST/modules.builtin.modinfo" "$GITHUB_WORKSPACE/gki-dist/"
+          if [ -s "$DIST/Module.symvers" ]; then
+            cp "$DIST/Module.symvers" "$GITHUB_WORKSPACE/gki-dist/"
+          fi
 
-          ln -s ../../KernelSU/kernel common/drivers/kernelsu
-          printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> common/drivers/Makefile
-
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("common/drivers/Kconfig")
-          s = p.read_text()
-          needle = 'source "drivers/kernelsu/Kconfig"'
-          if needle not in s:
-              idx = s.find("endmenu")
-              if idx < 0:
-                  raise SystemExit("common/drivers/Kconfig has no endmenu insertion point")
-              s = s[:idx] + needle + "\n\n" + s[idx:]
-              p.write_text(s)
-          PY
-
-      - name: Configure ReSukiSU GKI2 LKM mode
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/gki"
-          DEFCONFIG=common/arch/arm64/configs/gki_defconfig
-
-          common/scripts/config --file "$DEFCONFIG"             -m KSU             -e KSU_TRACEPOINT_HOOK             -e KSU_MULTI_MANAGER_SUPPORT             -d KSU_MANUAL_HOOK             -d KSU_SUSFS
-
-          grep -E '^CONFIG_KSU(=|_)' "$DEFCONFIG"
-
-      - name: Build arm64 GKI
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/gki"
-          mkdir -p "$GITHUB_WORKSPACE/dist"
-
-          BUILD_CONFIG=common/build.config.gki.aarch64           DIST_DIR="$GITHUB_WORKSPACE/dist"           build/build.sh -j"$(nproc --all)"
-
-          test -s "$GITHUB_WORKSPACE/dist/Image"
-          test -s "$GITHUB_WORKSPACE/dist/vmlinux.symvers"
-          test -s "$GITHUB_WORKSPACE/dist/modules.builtin"
-          test -s "$GITHUB_WORKSPACE/dist/modules.builtin.modinfo"
-
-          KSU_KO="$(find "$GITHUB_WORKSPACE" -type f -name kernelsu.ko -print -quit)"
-          test -n "$KSU_KO"
-          cp "$KSU_KO" "$GITHUB_WORKSPACE/dist/kernelsu.ko"
-
-      - name: Record build provenance
+      - name: Record GKI provenance
         shell: bash
         run: |
           set -euo pipefail
@@ -142,43 +106,130 @@ jobs:
             echo "kernel_manifest=$KERNEL_MANIFEST"
             echo "kernel_branch=$KERNEL_BRANCH"
             echo "kernel_common_sha=$GKI_COMMON_SHA"
-            echo "resukisu_repo=$RESUKISU_REPO"
-            echo "resukisu_sha=$RESUKISU_SHA"
-            echo "config=CONFIG_KSU=m CONFIG_KSU_TRACEPOINT_HOOK=y"
+            echo "build_system=Kleaf"
+            echo "target=//common:kernel_aarch64_dist"
             echo "workflow=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-            echo "image_sha256=$(sha256sum dist/Image | awk '{print $1}')"
-            echo "kernelsu_ko_sha256=$(sha256sum dist/kernelsu.ko | awk '{print $1}')"
+            echo "image_sha256=$(sha256sum gki-dist/Image | awk '{print $1}')"
           } > GKI_BUILD_INFO.txt
 
-          sha256sum             dist/Image             dist/kernelsu.ko             dist/vmlinux.symvers             GKI_PINNED_MANIFEST.xml             GKI_BUILD_INFO.txt             > GKI_BUILD_SHA256SUMS.txt
+          sha256sum \
+            gki-dist/Image \
+            gki-dist/vmlinux.symvers \
+            GKI_PINNED_MANIFEST.xml \
+            GKI_BUILD_INFO.txt \
+            > GKI_BUILD_SHA256SUMS.txt
 
-      - name: Build summary
-        shell: bash
-        run: |
-          {
-            echo '# ReSukiSU GKI 5.15 build'
-            echo
-            echo "- ACK branch: `$KERNEL_BRANCH`"
-            echo "- kernel/common: `$GKI_COMMON_SHA`"
-            echo "- ReSukiSU: `$RESUKISU_SHA`"
-            echo '- Mode: `CONFIG_KSU=m + CONFIG_KSU_TRACEPOINT_HOOK=y`'
-            echo
-            echo '> BUILD ONLY. This is not an OnePlus 6 flashable boot image yet.'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload GKI build artifacts
+      - name: Upload GKI artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: OP6-GKI515-ReSukiSU-${{ env.GKI_COMMON_SHA }}
+          name: OP6-GKI515-${{ env.GKI_COMMON_SHA }}
           path: |
-            dist/Image
-            dist/kernelsu.ko
-            dist/vmlinux.symvers
-            dist/modules.builtin
-            dist/modules.builtin.modinfo
+            gki-dist/*
             GKI_PINNED_MANIFEST.xml
             GKI_BUILD_INFO.txt
             GKI_BUILD_SHA256SUMS.txt
           if-no-files-found: error
           compression-level: 6
           retention-days: 14
+
+      - name: GKI summary
+        shell: bash
+        run: |
+          {
+            echo '# Android 14 / Linux 5.15 GKI'
+            echo
+            echo "- ACK branch: `$KERNEL_BRANCH`"
+            echo "- kernel/common: `$GKI_COMMON_SHA`"
+            echo '- Build system: `Kleaf //common:kernel_aarch64_dist`'
+            echo
+            echo '> BUILD ONLY. This is not an OnePlus 6 flashable boot image yet.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  resukisu-lkm:
+    name: build-resukisu-lkm-android14-5.15
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/ylarod/ddk-min:android14-5.15-20260828
+      options: --privileged
+
+    steps:
+      - name: Resolve and fetch ReSukiSU
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          RESUKISU_SHA="$(git ls-remote "$RESUKISU_REPO" "refs/heads/$RESUKISU_BRANCH" | awk '{print $1}')"
+          [[ "$RESUKISU_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::Unable to resolve ReSukiSU branch"; exit 1;
+          }
+
+          git init "$GITHUB_WORKSPACE/ReSukiSU"
+          git -C "$GITHUB_WORKSPACE/ReSukiSU" remote add origin "$RESUKISU_REPO"
+          git -C "$GITHUB_WORKSPACE/ReSukiSU" fetch --depth=1 origin "$RESUKISU_SHA"
+          git -C "$GITHUB_WORKSPACE/ReSukiSU" checkout --detach FETCH_HEAD
+          test "$(git -C "$GITHUB_WORKSPACE/ReSukiSU" rev-parse HEAD)" = "$RESUKISU_SHA"
+          echo "RESUKISU_SHA=$RESUKISU_SHA" >> "$GITHUB_ENV"
+
+      - name: Build ReSukiSU GKI2 LKM
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/ReSukiSU/kernel"
+
+          # Match the upstream KernelSU DDK contract for android14-5.15 while
+          # explicitly selecting ReSukiSU's GKI2 tracepoint hook.
+          CONFIG_KSU=m \
+          CONFIG_KSU_TRACEPOINT_HOOK=y \
+          CONFIG_KSU_MULTI_MANAGER_SUPPORT=y \
+          CC=clang \
+          make -j"$(nproc)"
+
+          test -s kernelsu.ko
+          llvm-strip -d kernelsu.ko
+          mkdir -p "$GITHUB_WORKSPACE/lkm-dist"
+          cp kernelsu.ko "$GITHUB_WORKSPACE/lkm-dist/android14-5.15_kernelsu.ko"
+          modinfo "$GITHUB_WORKSPACE/lkm-dist/android14-5.15_kernelsu.ko" > "$GITHUB_WORKSPACE/lkm-dist/modinfo.txt"
+
+      - name: Record LKM provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "project=ReSukiSU GKI2 LKM for OnePlus 6 GKI bring-up"
+            echo "status=BUILD_ONLY_NOT_FLASHABLE"
+            echo "kmi=$KMI"
+            echo "ddk_release=$DDK_RELEASE"
+            echo "ddk_image=ghcr.io/ylarod/ddk-min:$KMI-$DDK_RELEASE"
+            echo "resukisu_repo=$RESUKISU_REPO"
+            echo "resukisu_sha=$RESUKISU_SHA"
+            echo "config=CONFIG_KSU=m CONFIG_KSU_TRACEPOINT_HOOK=y"
+            echo "workflow=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "kernelsu_ko_sha256=$(sha256sum "$GITHUB_WORKSPACE/lkm-dist/android14-5.15_kernelsu.ko" | awk '{print $1}')"
+          } > "$GITHUB_WORKSPACE/lkm-dist/LKM_BUILD_INFO.txt"
+
+          sha256sum "$GITHUB_WORKSPACE/lkm-dist/android14-5.15_kernelsu.ko" \
+            > "$GITHUB_WORKSPACE/lkm-dist/LKM_SHA256SUMS.txt"
+
+      - name: Upload ReSukiSU LKM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: OP6-ReSukiSU-android14-5.15-${{ env.RESUKISU_SHA }}
+          path: lkm-dist/*
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 14
+
+      - name: LKM summary
+        shell: bash
+        run: |
+          {
+            echo '# ReSukiSU Android 14 / 5.15 LKM'
+            echo
+            echo "- KMI: `$KMI`"
+            echo "- DDK: `$DDK_RELEASE`"
+            echo "- ReSukiSU: `$RESUKISU_SHA`"
+            echo '- Mode: `CONFIG_KSU=m + CONFIG_KSU_TRACEPOINT_HOOK=y`'
+            echo
+            echo '> BUILD ONLY. Runtime loading on OP6 requires the later 5.15 boot/vendor-module bring-up.'
+          } >> "$GITHUB_STEP_SUMMARY"
