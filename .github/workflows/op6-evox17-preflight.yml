@@ -7,6 +7,7 @@ on:
     paths:
       - 'manifests/op6-evox17.xml'
       - 'scripts/bootstrap-evox17-op6.sh'
+      - 'scripts/build-evox17-op6.sh'
       - '.github/workflows/op6-evox17-preflight.yml'
   workflow_dispatch:
 
@@ -21,6 +22,13 @@ jobs:
     steps:
       - name: Checkout control repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate build scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/bootstrap-evox17-op6.sh
+          bash -n scripts/build-evox17-op6.sh
 
       - name: Validate manifest XML and refs
         shell: bash
