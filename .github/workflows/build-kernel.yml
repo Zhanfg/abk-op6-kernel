@@ -7,17 +7,22 @@ on:
         description: Build variant
         required: true
         type: string
+      kernel_branch:
+        description: Kernel source branch
+        required: false
+        type: string
+        default: master
 
 permissions:
   contents: read
 
 concurrency:
-  group: oneplus6-${{ inputs.mode }}-${{ github.ref }}
+  group: oneplus6-${{ inputs.mode }}-${{ inputs.kernel_branch }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   KERNEL_SOURCE: https://github.com/Zhanfg/kernel_oneplus_sdm845
-  KERNEL_BRANCH: master
+  KERNEL_BRANCH: ${{ inputs.kernel_branch }}
   DEFCONFIG: vendor/enchilada_defconfig
   MODE: ${{ inputs.mode }}
   ANYKERNEL_REPOSITORY: https://github.com/osm0sis/AnyKernel3.git
