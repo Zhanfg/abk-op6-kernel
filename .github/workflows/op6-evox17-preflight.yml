@@ -87,8 +87,10 @@ jobs:
           grep -Fq 'lineage_enchilada-cp2a-user' "$ROOT/enchilada/AndroidProducts.mk"
           grep -Fq 'vendor/lineage/config/common_full_phone.mk' "$ROOT/enchilada/lineage_enchilada.mk"
           grep -Fq 'device/oneplus/sdm845-common/common.mk' "$ROOT/enchilada/device.mk"
-          grep -Fq 'vendor/lineage/config/device_framework_matrix.xml'             "$ROOT/sdm845-common/BoardConfigCommon.mk"
-          grep -Fq -- '--set_verification_disabled_flag'             "$ROOT/sdm845-common/BoardConfigCommon.mk"
+          grep -Fq 'BOARD_AVB_ENABLE := true' "$ROOT/sdm845-common/BoardConfigCommon.mk"
+          ! grep -Fq 'vendor/lineage/config/device_framework_matrix.xml' "$ROOT/sdm845-common/BoardConfigCommon.mk"
+          ! grep -Fq -- '--set_verification_disabled_flag' "$ROOT/sdm845-common/BoardConfigCommon.mk"
+          ! grep -Fq -- '--set_hashtree_disabled_flag' "$ROOT/sdm845-common/BoardConfigCommon.mk"
 
       - name: Validate legacy 4.19 ROM kernel branch
         shell: bash
@@ -107,7 +109,8 @@ jobs:
             echo '- Evolution X branch: `cnb`'
             echo '- Lunch target: `lineage_enchilada-cp2a-user{,debug}`'
             echo '- Legacy kernel: `legacy-4.19-a17`'
-            echo '- Parallel GKI target: `common-android14-5.15-2026-07`'
+            echo '- Stable bring-up GKI workspace: `common-android14-5.15-2026-07`'
+            echo '- ReSukiSU+SUSFS CI: current `common-android14-5.15` with exact SHA recording'
             echo
             echo 'Preflight validates source topology only; it is not a full ROM compile.'
           } >> "$GITHUB_STEP_SUMMARY"
