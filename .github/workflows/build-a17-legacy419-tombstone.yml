@@ -43,6 +43,14 @@ jobs:
           grep -Fq 'init_waitqueue_head(&proc->freeze_wait)' kernel/drivers/android/binder.c
           grep -Fq 'swappiness=200' kernel/mm/memcontrol.c
           grep -Fq 'proactive_swappiness' kernel/mm/vmscan.c
+          grep -Fq 'CONFIG_UCLAMP_TASK=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_UCLAMP_TASK_GROUP=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_PROCESS_RECLAIM=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq '#define MADV_COLD' kernel/include/uapi/asm-generic/mman-common.h
+          grep -Fq '#define MADV_PAGEOUT' kernel/include/uapi/asm-generic/mman-common.h
+          grep -Fq '#define __NR_process_madvise 440' kernel/include/uapi/asm-generic/unistd.h
+          grep -Fq 'SYSCALL_DEFINE5(process_madvise' kernel/mm/madvise.c
+          grep -Fq 'deactivate_page(struct page *page)' kernel/mm/swap.c
 
   build:
     needs: source-gate
