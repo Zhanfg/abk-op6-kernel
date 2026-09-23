@@ -51,6 +51,8 @@ jobs:
           grep -Fq '#define __NR_process_madvise 440' kernel/include/uapi/asm-generic/unistd.h
           grep -Fq 'SYSCALL_DEFINE5(process_madvise' kernel/mm/madvise.c
           grep -Fq 'deactivate_page(struct page *page)' kernel/mm/swap.c
+          grep -Fq 'CONFIG_WIREGUARD=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_NET_SCH_CAKE=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
 
   build:
     needs: source-gate
