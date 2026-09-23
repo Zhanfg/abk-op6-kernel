@@ -30,6 +30,7 @@ jobs:
           grep -Eq '#define[[:space:]]+BBR_VERSION[[:space:]]+3' kernel/net/ipv4/tcp_bbr.c
           grep -Fq 'CONFIG_TCP_CONG_BBR=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
           grep -Fq 'CONFIG_NET_SCH_FQ=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          test -s kernel/net/ipv4/tcp_dctcp.h
 
   build:
     needs: source-gate
