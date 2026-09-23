@@ -91,6 +91,25 @@ jobs:
           ! grep -Fq 'vendor/lineage/config/device_framework_matrix.xml' "$ROOT/sdm845-common/BoardConfigCommon.mk"
           ! grep -Fq -- '--set_verification_disabled_flag' "$ROOT/sdm845-common/BoardConfigCommon.mk"
           ! grep -Fq -- '--set_hashtree_disabled_flag' "$ROOT/sdm845-common/BoardConfigCommon.mk"
+          test -s "$ROOT/sdm845-common/configs/task_profiles.json"
+          grep -Fq 'OP6UClampTopApp' "$ROOT/sdm845-common/configs/task_profiles.json"
+          grep -Fq 'OP6UClampBackground' "$ROOT/sdm845-common/configs/task_profiles.json"
+          grep -Fq '$(LOCAL_PATH)/configs/task_profiles.json:$(TARGET_COPY_OUT_VENDOR)/etc/task_profiles.json' "$ROOT/sdm845-common/common.mk"
+          ! grep -Fq 'mkdir /sys/fs/cgroup/memory/bg' "$ROOT/sdm845-common/init/init.qcom.rc"
+          grep -Fq 'unified cgroup v2 memory/freezer' "$ROOT/sdm845-common/init/init.qcom.rc"
+
+      - name: Validate Android 17 nGKI integration branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/op6"
+          git clone --depth=1 --branch feature/tombstone-native-4.19             https://github.com/Zhanfg/kernel_oneplus_sdm845.git "$ROOT/kernel-a17"
+          grep -Fq 'CONFIG_UCLAMP_TASK=y' "$ROOT/kernel-a17/arch/arm64/configs/vendor/enchilada_defconfig"
+          grep -Fq 'CONFIG_UCLAMP_TASK_GROUP=y' "$ROOT/kernel-a17/arch/arm64/configs/vendor/enchilada_defconfig"
+          grep -Fq '#define __NR_process_madvise 440' "$ROOT/kernel-a17/include/uapi/asm-generic/unistd.h"
+          grep -Fq 'SYSCALL_DEFINE5(process_madvise' "$ROOT/kernel-a17/mm/madvise.c"
+          grep -Fq 'BINDER_FREEZE' "$ROOT/kernel-a17/include/uapi/linux/android/binder.h"
+          grep -Fq '.name = "reclaim"' "$ROOT/kernel-a17/mm/memcontrol.c"
 
       - name: Validate legacy 4.19 ROM kernel branch
         shell: bash
