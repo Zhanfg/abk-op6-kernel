@@ -1,0 +1,40 @@
+name: Build A17 Legacy 4.19 BBRv3 Backport
+
+on:
+  push:
+    branches:
+      - prep/android17-gki-rom
+    paths:
+      - '.github/workflows/build-a17-legacy419-bbrv3.yml'
+      - '.github/workflows/build-kernel.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-a17-legacy419-bbrv3.yml'
+      - '.github/workflows/build-kernel.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Audit BBRv3 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth=1 --branch feature/bbrv3-4.19             https://github.com/Zhanfg/kernel_oneplus_sdm845.git kernel
+          grep -Fq '#define BBR_VERSION' kernel/net/ipv4/tcp_bbr.c
+          grep -Eq '#define[[:space:]]+BBR_VERSION[[:space:]]+3' kernel/net/ipv4/tcp_bbr.c
+          grep -Fq 'CONFIG_TCP_CONG_BBR=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_NET_SCH_FQ=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          test -s kernel/net/ipv4/tcp_dctcp.h
+
+  build:
+    needs: source-gate
+    uses: ./.github/workflows/build-kernel.yml
+    with:
+      mode: Standard
+      kernel_branch: feature/bbrv3-4.19

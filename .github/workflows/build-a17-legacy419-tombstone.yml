@@ -1,0 +1,62 @@
+name: Build A17 Legacy 4.19 Native Tombstone
+
+on:
+  push:
+    branches:
+      - prep/android17-gki-rom
+    paths:
+      - '.github/workflows/build-a17-legacy419-tombstone.yml'
+      - '.github/workflows/build-kernel.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-a17-legacy419-tombstone.yml'
+      - '.github/workflows/build-kernel.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Audit freezer/reclaim support
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth=1 --branch feature/tombstone-native-4.19             https://github.com/Zhanfg/kernel_oneplus_sdm845.git kernel
+          grep -Fq 'CONFIG_CGROUP_FREEZER=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_MEMCG=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_MEMCG_SWAP=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq '.name = "cgroup.freeze"' kernel/kernel/cgroup/cgroup.c
+          grep -Fq 'static ssize_t memory_reclaim(' kernel/mm/memcontrol.c
+          grep -Fq '.name = "reclaim"' kernel/mm/memcontrol.c
+          grep -Fq 'CONFIG_REKERNEL=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_REKERNEL_NETWORK=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          test -s kernel/drivers/rekernel/rekernel.c
+          grep -Fq 'OP6 Re:Kernel frozen-app notification path' kernel/drivers/android/binder.c
+          grep -Fq 'BINDER_FREEZE' kernel/include/uapi/linux/android/binder.h
+          grep -Fq 'BINDER_GET_FROZEN_INFO' kernel/include/uapi/linux/android/binder.h
+          grep -Fq 'BR_FROZEN_REPLY' kernel/include/uapi/linux/android/binder.h
+          grep -Fq 'binder_txns_pending_ilocked' kernel/drivers/android/binder.c
+          grep -Fq 'init_waitqueue_head(&proc->freeze_wait)' kernel/drivers/android/binder.c
+          grep -Fq 'swappiness=200' kernel/mm/memcontrol.c
+          grep -Fq 'proactive_swappiness' kernel/mm/vmscan.c
+          grep -Fq 'CONFIG_UCLAMP_TASK=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_UCLAMP_TASK_GROUP=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_PROCESS_RECLAIM=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq '#define MADV_COLD' kernel/include/uapi/asm-generic/mman-common.h
+          grep -Fq '#define MADV_PAGEOUT' kernel/include/uapi/asm-generic/mman-common.h
+          grep -Fq '#define __NR_process_madvise 440' kernel/include/uapi/asm-generic/unistd.h
+          grep -Fq 'SYSCALL_DEFINE5(process_madvise' kernel/mm/madvise.c
+          grep -Fq 'deactivate_page(struct page *page)' kernel/mm/swap.c
+          grep -Fq 'CONFIG_WIREGUARD=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+          grep -Fq 'CONFIG_NET_SCH_CAKE=y' kernel/arch/arm64/configs/vendor/enchilada_defconfig
+
+  build:
+    needs: source-gate
+    uses: ./.github/workflows/build-kernel.yml
+    with:
+      mode: Standard
+      kernel_branch: feature/tombstone-native-4.19

@@ -1,0 +1,100 @@
+name: Build GKI 5.15 ReSukiSU + SUSFS
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-gki-5.15-resukisu-susfs.yml"
+      - "scripts/build-gki-5.15-resukisu-susfs.sh"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: op6-gki515-resukisu-susfs-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KERNEL_MANIFEST_BRANCH: common-android14-5.15
+  KERNEL_MANIFEST_URL: https://android.googlesource.com/kernel/manifest
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout control repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Free runner space
+        uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             repo git curl ca-certificates python3 build-essential bc bison flex             libssl-dev libelf-dev libncurses-dev dwarves rsync cpio lz4 zstd
+
+      - name: Sync Android GKI 5.15
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/gki"
+          cd "$RUNNER_TEMP/gki"
+          repo init -u "$KERNEL_MANIFEST_URL" -b "$KERNEL_MANIFEST_BRANCH" --depth=1
+          repo sync -c --no-tags --no-clone-bundle -j4
+          repo manifest -r -o "$GITHUB_WORKSPACE/gki-pinned-manifest.xml"
+
+      - name: Integrate ReSukiSU + latest SUSFS and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build-gki-5.15-resukisu-susfs.sh
+          scripts/build-gki-5.15-resukisu-susfs.sh "$RUNNER_TEMP/gki"
+
+      - name: Verify artifact metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIST="$RUNNER_TEMP/gki/out/dist"
+          test -s "$DIST/Image"
+          test -s "$DIST/gki.config"
+          test -s "$DIST/GKI_BUILD_INFO.txt"
+          grep -q '^CONFIG_KSU=y$' "$DIST/gki.config"
+          grep -q '^CONFIG_KSU_SUSFS=y$' "$DIST/gki.config"
+          cat "$DIST/GKI_BUILD_INFO.txt"
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          DIST="$RUNNER_TEMP/gki/out/dist"
+          cp "$DIST/Image" artifacts/
+          cp "$DIST/gki.config" artifacts/
+          cp "$DIST/GKI_BUILD_INFO.txt" artifacts/
+          cp gki-pinned-manifest.xml artifacts/
+          for f in Module.symvers System.map abi_symbollist; do
+            src="$(find "$DIST" -maxdepth 2 -type f -name "$f" -print -quit)"
+            [ -z "$src" ] || cp "$src" artifacts/
+          done
+          (cd artifacts && sha256sum * > SHA256SUMS)
+
+      - name: Upload GKI artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: OP6-GKI515-ReSukiSU-SUSFS
+          path: artifacts/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

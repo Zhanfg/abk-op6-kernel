@@ -1,0 +1,20 @@
+name: Build A17 Legacy 4.19
+
+on:
+  push:
+    branches:
+      - prep/android17-gki-rom
+    paths:
+      - '.github/workflows/build-a17-legacy419.yml'
+      - '.github/workflows/build-kernel.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-kernel.yml
+    with:
+      mode: Standard
+      kernel_branch: legacy-4.19-a17

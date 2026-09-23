@@ -1,0 +1,47 @@
+name: Build A17 Legacy 4.19 SuSFS 2.3 Backport
+
+on:
+  push:
+    branches:
+      - prep/android17-gki-rom
+    paths:
+      - '.github/workflows/build-a17-legacy419-susfs23.yml'
+      - '.github/workflows/build-kernel.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-a17-legacy419-susfs23.yml'
+      - '.github/workflows/build-kernel.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Audit 4.19 SuSFS backport branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth=1 --branch feature/susfs-2.3.0-4.19             https://github.com/Zhanfg/kernel_oneplus_sdm845.git kernel
+          grep -Fq '#define TIF_PROC_NO_SU 34' kernel/include/linux/susfs_def.h
+          grep -Fq '#define TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT 35' kernel/include/linux/susfs_def.h
+          grep -Fq 'ZYGOTE_NEXT_DOMAIN' kernel/drivers/kernelsu/selinux/selinux.h
+          grep -Fq 'handle_zygote_next_setresuid' kernel/drivers/kernelsu/hook/setuid_hook.c
+
+          VERSION="$(grep -E '^#define SUSFS_VERSION ' kernel/include/linux/susfs.h | awk '{gsub(/"/,"",$3); print $3}')"
+          echo "Current backport version marker: $VERSION"
+          if [ "$VERSION" = "v2.3.0" ]; then
+            echo "SuSFS 2.3 version gate reached."
+          else
+            echo "Backport is intentionally incomplete; semantic gates run before the version bump."
+          fi
+
+  build:
+    needs: source-gate
+    uses: ./.github/workflows/build-kernel.yml
+    with:
+      mode: Standard
+      kernel_branch: feature/susfs-2.3.0-4.19

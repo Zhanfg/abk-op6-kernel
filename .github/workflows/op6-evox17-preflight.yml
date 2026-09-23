@@ -1,0 +1,135 @@
+name: OP6 EvoX17 Preflight
+
+on:
+  push:
+    branches:
+      - prep/android17-gki-rom
+    paths:
+      - 'manifests/op6-evox17.xml'
+      - 'scripts/bootstrap-evox17-op6.sh'
+      - 'scripts/build-evox17-op6.sh'
+      - '.github/workflows/op6-evox17-preflight.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout control repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate build scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/bootstrap-evox17-op6.sh
+          bash -n scripts/build-evox17-op6.sh
+
+      - name: Validate manifest XML and refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import subprocess
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          path = Path("manifests/op6-evox17.xml")
+          root = ET.parse(path).getroot()
+          assert root.tag == "manifest"
+
+          remotes = {r.attrib["name"]: r.attrib["fetch"] for r in root.findall("remote")}
+          failures = []
+          for project in root.findall("project"):
+              name = project.attrib["name"]
+              remote = project.attrib["remote"]
+              revision = project.attrib.get("revision")
+              if not revision:
+                  failures.append(f"{name}: missing explicit revision")
+                  continue
+              url = f"{remotes[remote].rstrip('/')}/{name}.git"
+              ref = revision if revision.startswith("refs/") else f"refs/heads/{revision}"
+              p = subprocess.run(
+                  ["git", "ls-remote", "--exit-code", url, ref],
+                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+              )
+              if p.returncode:
+                  failures.append(f"{name}: missing {revision}: {p.stderr.strip()}")
+              else:
+                  print(f"OK: {name}@{revision}")
+          if failures:
+              raise SystemExit("\n".join(failures))
+          PY
+
+      - name: Validate Evolution X cnb manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-remote --exit-code https://github.com/Evolution-X/manifest.git refs/heads/cnb
+          curl --fail --location --retry 3             https://raw.githubusercontent.com/Evolution-X/manifest/cnb/README.mkdn             | grep -F 'lineage_codename-cp2a-user'
+
+      - name: Audit active OnePlus 6 product target
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/op6"
+          mkdir -p "$ROOT"
+
+          git clone --depth=1 --branch bringup/evox17             https://github.com/Zhanfg/android_device_oneplus_enchilada.git             "$ROOT/enchilada"
+          git clone --depth=1 --branch bringup/evox17             https://github.com/Zhanfg/android_device_oneplus_sdm845-common.git             "$ROOT/sdm845-common"
+
+          grep -Fq '$(LOCAL_DIR)/lineage_enchilada.mk' "$ROOT/enchilada/AndroidProducts.mk"
+          grep -Fq 'lineage_enchilada-cp2a-user' "$ROOT/enchilada/AndroidProducts.mk"
+          grep -Fq 'vendor/lineage/config/common_full_phone.mk' "$ROOT/enchilada/lineage_enchilada.mk"
+          grep -Fq 'device/oneplus/sdm845-common/common.mk' "$ROOT/enchilada/device.mk"
+          grep -Fq 'BOARD_AVB_ENABLE := true' "$ROOT/sdm845-common/BoardConfigCommon.mk"
+          ! grep -Fq 'vendor/lineage/config/device_framework_matrix.xml' "$ROOT/sdm845-common/BoardConfigCommon.mk"
+          ! grep -Fq -- '--set_verification_disabled_flag' "$ROOT/sdm845-common/BoardConfigCommon.mk"
+          ! grep -Fq -- '--set_hashtree_disabled_flag' "$ROOT/sdm845-common/BoardConfigCommon.mk"
+          test -s "$ROOT/sdm845-common/configs/task_profiles.json"
+          grep -Fq 'OP6UClampTopApp' "$ROOT/sdm845-common/configs/task_profiles.json"
+          grep -Fq 'OP6UClampBackground' "$ROOT/sdm845-common/configs/task_profiles.json"
+          grep -Fq '$(LOCAL_PATH)/configs/task_profiles.json:$(TARGET_COPY_OUT_VENDOR)/etc/task_profiles.json' "$ROOT/sdm845-common/common.mk"
+          ! grep -Fq 'mkdir /sys/fs/cgroup/memory/bg' "$ROOT/sdm845-common/init/init.qcom.rc"
+          grep -Fq 'unified cgroup v2 memory/freezer' "$ROOT/sdm845-common/init/init.qcom.rc"
+
+      - name: Validate Android 17 nGKI integration branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/op6"
+          git clone --depth=1 --branch feature/tombstone-native-4.19             https://github.com/Zhanfg/kernel_oneplus_sdm845.git "$ROOT/kernel-a17"
+          grep -Fq 'CONFIG_UCLAMP_TASK=y' "$ROOT/kernel-a17/arch/arm64/configs/vendor/enchilada_defconfig"
+          grep -Fq 'CONFIG_UCLAMP_TASK_GROUP=y' "$ROOT/kernel-a17/arch/arm64/configs/vendor/enchilada_defconfig"
+          grep -Fq '#define __NR_process_madvise 440' "$ROOT/kernel-a17/include/uapi/asm-generic/unistd.h"
+          grep -Fq 'SYSCALL_DEFINE5(process_madvise' "$ROOT/kernel-a17/mm/madvise.c"
+          grep -Fq 'BINDER_FREEZE' "$ROOT/kernel-a17/include/uapi/linux/android/binder.h"
+          grep -Fq '.name = "reclaim"' "$ROOT/kernel-a17/mm/memcontrol.c"
+
+      - name: Validate legacy 4.19 ROM kernel branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA="$(git ls-remote             https://github.com/Zhanfg/kernel_oneplus_sdm845.git             refs/heads/legacy-4.19-a17 | awk '{print $1}')"
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          echo "legacy-4.19-a17: $SHA"
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo '# OnePlus 6 Evolution X Android 17 preflight'
+            echo
+            echo '- Evolution X branch: `cnb`'
+            echo '- Lunch target: `lineage_enchilada-cp2a-user{,debug}`'
+            echo '- Legacy kernel: `legacy-4.19-a17`'
+            echo '- Stable bring-up GKI workspace: `common-android14-5.15-2026-07`'
+            echo '- ReSukiSU+SUSFS CI: current `common-android14-5.15` with exact SHA recording'
+            echo
+            echo 'Preflight validates source topology only; it is not a full ROM compile.'
+          } >> "$GITHUB_STEP_SUMMARY"
