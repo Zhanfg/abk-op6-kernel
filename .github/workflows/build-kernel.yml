@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  KERNEL_SOURCE: https://github.com/Zhanfg/kernel_oneplus_sdm845
+  KERNEL_SOURCE: https://github.com/ZhanfgBuild/kernel_oneplus_sdm845
   KERNEL_BRANCH: master
   DEFCONFIG: vendor/enchilada_defconfig
   MODE: ${{ inputs.mode }}
