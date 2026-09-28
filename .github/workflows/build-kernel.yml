@@ -52,6 +52,8 @@ jobs:
 
       - name: 检出构建仓库
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: 安装构建依赖
         shell: bash
@@ -61,8 +63,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             git build-essential bc flex bison libssl-dev libelf-dev \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            clang lld llvm python3 zip unzip cpio ccache \
+            clang lld llvm python3 zip unzip cpio ccache shellcheck \
             device-tree-compiler libncurses-dev
+
+      - name: 验证构建仓脚本与契约测试
+        shell: bash
+        run: |
+          set -euo pipefail
+          shellcheck scripts/*.sh tests/*.sh
+          bash tests/test_build_contract.sh
 
       - name: 设置 ccache
         uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639 # v1.2
@@ -104,6 +113,14 @@ jobs:
           grep -E \
             "PM_WAKELOCKS_GC|PM_AUTOSLEEP|WQ_POWER|CPU_BOOST|CPU_FREQ_DEFAULT_GOV|STEP_WISE|ADRENO_TZ" \
             "${GITHUB_WORKSPACE}/kernel/arch/arm64/configs/vendor/enchilada_defconfig"
+
+      - name: 验证内核源码契约
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "${GITHUB_WORKSPACE}/scripts/validate_kernel_source.sh" \
+            "${GITHUB_WORKSPACE}/kernel" \
+            "arch/arm64/configs/${DEFCONFIG}"
 
       - name: 下载固定版本 DTBO 工具
         shell: bash
