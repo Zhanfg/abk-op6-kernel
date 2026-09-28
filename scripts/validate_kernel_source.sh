@@ -36,7 +36,7 @@ drivers_kconfig="$kernel_root/drivers/Kconfig"
 grep -Eq '^VERSION[[:space:]]*=[[:space:]]*4([[:space:]]|$)' "$makefile" ||   fail "ABK OnePlus 6 builder requires Linux 4.x"
 grep -Eq '^PATCHLEVEL[[:space:]]*=[[:space:]]*19([[:space:]]|$)' "$makefile" ||   fail "ABK OnePlus 6 builder requires Linux 4.19"
 
-grep -Fqx 'obj-$(CONFIG_KSU) += kernelsu/' "$drivers_makefile" ||   fail "drivers/Makefile does not build drivers/kernelsu"
+grep -Fqx "obj-\$(CONFIG_KSU) += kernelsu/" "$drivers_makefile" ||   fail "drivers/Makefile does not build drivers/kernelsu"
 grep -Fqx 'source "drivers/kernelsu/Kconfig"' "$drivers_kconfig" ||   fail "drivers/Kconfig does not source drivers/kernelsu/Kconfig"
 
 required_y_symbols=(
