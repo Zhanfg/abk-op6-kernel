@@ -7,7 +7,7 @@
 | 角色 | 仓库 | 默认分支 | 用途 |
 |---|---|---|---|
 | 构建与发布 | `Zhanfg/abk-op6-kernel` | `main` | GitHub Actions、构建变体、AnyKernel3 打包、发布文档 |
-| 内核源码 | `Zhanfg/kernel_oneplus_sdm845` | `master` | SDM845 / Linux 4.19 源码、自定义功能和上游基线记录 |
+| 内核源码 | `ZhanfgBuild/kernel_oneplus_sdm845` | `master` | SDM845 / Linux 4.19 源码、自定义功能和上游基线记录 |
 
 两个仓库作为同一个 OnePlus 6 项目维护。构建仓库负责可重复构建与发布，源码仓库负责代码、配置、上游核查和后续迁移。
 

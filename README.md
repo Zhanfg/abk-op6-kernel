@@ -9,7 +9,7 @@
 | 仓库 | 作用 |
 |---|---|
 | `Zhanfg/abk-op6-kernel` | GitHub Actions、Standard / PowerSave 构建、AnyKernel3 打包、发布文档 |
-| `Zhanfg/kernel_oneplus_sdm845` | OnePlus 6 SDM845 Linux 4.19 源码、自定义功能与上游基线记录 |
+| `ZhanfgBuild/kernel_oneplus_sdm845` | OnePlus 6 SDM845 Linux 4.19 源码、自定义功能与上游基线记录 |
 
 构建仓库默认读取源码仓库 `master` 分支，但每次运行都会先解析并固定具体源码提交 SHA，避免构建过程中分支发生漂移。
 

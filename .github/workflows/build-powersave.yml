@@ -11,6 +11,8 @@ on:
       - ".github/workflows/build-powersave.yml"
       - ".github/workflows/build-kernel.yml"
       - "scripts/powersave_defconfig.patch"
+      - "scripts/validate_kernel_source.sh"
+      - "tests/test_build_contract.sh"
 
 permissions:
   contents: read
