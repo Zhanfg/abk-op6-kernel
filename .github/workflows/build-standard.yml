@@ -3,6 +3,8 @@ name: Build Standard
 on:
   workflow_dispatch:
   push:
+    branches:
+      - "test/op6-4500mah-battery"
     tags:
       - "v*"
   pull_request:
