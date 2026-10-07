@@ -18,6 +18,7 @@ concurrency:
 env:
   KERNEL_SOURCE: https://github.com/ZhanfgBuild/kernel_oneplus_sdm845
   KERNEL_BRANCH: feature/op6-4500mah-battery
+  # Validation branch for replacement-battery source PR #27.
   DEFCONFIG: vendor/enchilada_defconfig
   MODE: ${{ inputs.mode }}
   ANYKERNEL_REPOSITORY: https://github.com/osm0sis/AnyKernel3.git
