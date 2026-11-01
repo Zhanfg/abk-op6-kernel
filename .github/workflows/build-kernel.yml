@@ -136,7 +136,7 @@ jobs:
             echo "BAKASU_SOURCE_SHA=${BAKASU_PIN}"
             echo 'ROOT_ENGINE=BakaSU'
           } >> "${GITHUB_ENV}"
-          echo "Pinned BakaSU ${BAKASU_PIN}, Linux 4.19 manual hook + existing SuSFS stays in kernel source"
+          echo "Pinned BakaSU ${BAKASU_PIN}, Linux 4.19 SuSFS inline hook + legacy accessors kept in kernel source"
       - name: 补齐旧版 SuSFS 与 BakaSU 的线程标志接口
         if: inputs.bakasu_sha != ''
         shell: bash
