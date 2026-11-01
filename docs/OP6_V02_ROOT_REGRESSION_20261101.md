@@ -1,5 +1,47 @@
 # OnePlus 6 Android 17 — v0.2 Root regression (2026-11-01)
 
+## Update from 2026-11-01 22:56:54 device diagnosis — PRIORITY
+
+The user supplied `OP6_BakaSU_Rootless_Diag_20261101_225654.txt`.
+
+- Current Android 17 OnePlus 6 is booted from **slot `_a`**.
+- **Actually running** `uname -r`:
+  `4.19.325-cip136-st20-perf-gfd77fc2e307e-dirty`.
+- **Archived v0.2 BOOT_USER_TESTED.img actual embedded kernel release**:
+  `4.19.325-cip136-st20-perf-g9ad0027fcccb-dirty`.
+  These values differ: the archived v0.2 Boot is NOT the currently running kernel.
+  This is the first item to resolve before attributing Root failure to v0.2 itself.
+- The current runtime commit ID `fd77fc2e307e` matches an upstream OnePlus 6
+  kernel commit which has no KernelSU source integration in `kernel/reboot.c`,
+  `drivers/Kconfig`, or `drivers/Makefile` at that exact commit.
+  A dirty downstream build could differ; without current boot.img bytes, **do not**
+  conclusively assert KernelSU is missing on the device.
+- **Earlier diagnostic script contained a genuine package-name bug.**
+  The BakaSU Gradle `namespace` is `org.bakasu.bakasu` but its default
+  APK `applicationId` is **`com.resukisu.resukisu`**, which the original
+  script did not query. Its six `not-found` lines are consequently **not**
+  reliable evidence of absence. Android shell PackageManager access may
+  independently be restricted.
+- `/proc/version` returned permission denied and no KernelSU init lines
+  were obtained. These are unavailable observations, not negative evidence.
+- The user reports BakaSU UI opens but says KernelSU not compiled; this
+  observation now applies to the **actually running `gfd77fc2e307e` kernel**,
+  not a byte-confirmed v0.2 boot.
+- The true next gate is to establish the source and SHA of **current slot A
+  Boot**, or temporarily boot the verified v0.2 Boot with
+  `fastboot boot <verified-v0.2.img>` **only if the ROM baseline still matches**.
+  Do not perform unconditional `fastboot flash`, wipe data, modify vbmeta,
+  or lock the bootloader.
+- Check `com.resukisu.resukisu` with a corrected no-root script and verify
+  its signing certificate/UAPI only **after** confirming the expected kernel
+  is running.
+
+**Correction:** Prior "v0.2 boot succeeds, Root fails" was too strong:
+the latest live evidence cannot establish a Root regression of the archived
+v0.2 image, because the running kernel is different.
+
+---
+
 ## User-reported runtime result
 
 - **Boot:** v0.2 boot image starts Android successfully.
