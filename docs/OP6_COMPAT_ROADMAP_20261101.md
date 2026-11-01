@@ -26,6 +26,9 @@ BakaSU 固定 `Baka-SU/BakaSU@516d3e87fbc986ccefdde2c2765f1700612441a9`。
 
 现有 BakaSU 内核的 `kernel/manager/apk_sign.c` 白名单为：
 BakaSU、官方 KernelSU、KOWX712（后两项在 `CONFIG_KSU_MULTI_MANAGER_SUPPORT` 下）。
+**目标 EXP 白名单限定四个用户指定分支**（官方 KernelSU、Next、SukiSU Ultra、BakaSU）；
+上游默认包含的 KOWX712 在 EXP 版本中作为可移除的历史兼容项，不计入四管理器验收，
+不额外扩大信任范围；在基线 Standard 上不贸然删除上游默认项。
 `kernel/manager/manager.c` 使用可包含多个 `appid` 的 RCU 链表，
 `manager/throne_tracker.c` 负责发现/注册管理器；
 `feature/dynamic_manager.c` 只有**一个**可动态改写的证书槽位，
