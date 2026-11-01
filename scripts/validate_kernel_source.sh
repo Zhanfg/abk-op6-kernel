@@ -27,7 +27,7 @@ done
 
 grep -Eq '^VERSION[[:space:]]*=[[:space:]]*4([[:space:]]|$)' "$makefile" || fail "Linux 4.x required"
 grep -Eq '^PATCHLEVEL[[:space:]]*=[[:space:]]*19([[:space:]]|$)' "$makefile" || fail "Linux 4.19 required"
-grep -Fqx 'obj-$(CONFIG_KSU) += kernelsu/' "$drivers_makefile" || fail "drivers/Makefile lacks KSU build edge"
+grep -Fqx "obj-\$(CONFIG_KSU) += kernelsu/" "$drivers_makefile" || fail "drivers/Makefile lacks KSU build edge"
 grep -Fqx 'source "drivers/kernelsu/Kconfig"' "$drivers_kconfig" || fail "drivers/Kconfig lacks KSU Kconfig"
 
 required_y_symbols=(KPROBES KRETPROBES KSU KSU_MANUAL_HOOK)
