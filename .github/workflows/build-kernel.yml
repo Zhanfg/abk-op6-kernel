@@ -233,6 +233,11 @@ jobs:
           fi
           make -j"$(nproc --all)" "${MAKE_ARGS[@]}" "DTC_FLAGS=-@" Image.gz-dtb dtbs
           test -s out/arch/arm64/boot/Image.gz-dtb
+          # The previous CompatExp caused a Fastboot boot failure. ROM DTB
+          # parity is mandatory before producing another flashable AK3.
+          if [[ "${MODE}" == CompatExp ]]; then
+            python3 "${GITHUB_WORKSPACE}/scripts/check_op6_rom_dtb.py" out/arch/arm64/boot/Image.gz-dtb
+          fi
           if [[ -n "${BAKASU_SOURCE_SHA:-}" ]]; then
             bash "${GITHUB_WORKSPACE}/scripts/check_bakasu_features.sh" "${GITHUB_WORKSPACE}/kernel"
           fi

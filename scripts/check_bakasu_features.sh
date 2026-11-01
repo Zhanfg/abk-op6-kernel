@@ -34,7 +34,28 @@ command -v llvm-nm >/dev/null || fail "llvm-nm not installed"
 symbols="$(mktemp)"
 trap 'rm -f "$symbols"' EXIT
 llvm-nm --defined-only "$module_dir/built-in.a" > "$symbols" || fail "cannot read archive symbols"
-grep -Eq '[[:space:]]ksu_handle_dynamic_manager$' "$symbols" || fail "dynamic manager implementation missing in archive"
+grep -Eq '[[:space:]]ksu_handle_dynamic_managergrep -Fq 'DYNAMIC_MANAGER_OP_SET' "$source_dir/uapi/supercall.h" || fail "dynamic-manager UAPI missing"
+
+if [[ "${MODE:-}" == CompatExp ]]; then
+  grep -Fqx 'CONFIG_WIREGUARD=y' "$config" || fail "WireGuard not built in"
+  grep -Fqx 'CONFIG_KSU_TOOLKIT_SUPPORT=y' "$config" || fail "Toolkit not enabled"
+  test -s "$kernel_root/out/drivers/net/wireguard/main.o" || fail "WireGuard main object absent"
+  for n in EXPECTED_HASH_NEXT EXPECTED_HASH_SUKISU; do
+    grep -Fq "$n" "$source_dir/kernel/manager/manager_sign.h" || fail "missing manager signature $n"
+  done
+  grep -Fq 'if (!capable(CAP_SYS_ADMIN))' "$source_dir/kernel/supercall/dispatch.c" || fail "Toolkit privilege gate missing"
+  echo "[OK] EXP manager allowlist, guarded Toolkit and WireGuard object compiled"
+fi
+
+echo "[OK] BakaSU Manual Hook, no SuSFS, multi-manager and dynamic-manager verified"
+echo "[INFO] Kernel-side checks only; boot/root/manager persistence require device testing"
+ "$symbols" || fail "dynamic manager implementation missing in archive"
+# In particular, catch a BakaSU object archive that compiled but did not
+# include its lifecycle, fd-install/reboot transport or manager auth code.
+# These checks cannot prove that initcalls or APK authentication run on-device.
+for ksu_symbol in kernelsu_init ksu_handle_sys_reboot ksu_install_fd ksu_is_manager_appid; do
+  grep -Eq "[[:space:]]${ksu_symbol}$" "$symbols" || fail "BakaSU runtime entry point missing: ${ksu_symbol}"
+done
 grep -Fq 'DYNAMIC_MANAGER_OP_SET' "$source_dir/uapi/supercall.h" || fail "dynamic-manager UAPI missing"
 
 if [[ "${MODE:-}" == CompatExp ]]; then
