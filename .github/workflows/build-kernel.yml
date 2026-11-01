@@ -165,16 +165,10 @@ jobs:
       - name: 接入 WireGuard 4.19 兼容驱动
         if: inputs.mode == 'CompatExp'
         shell: bash
-        env:
-          WG_PIN: 3d3c92b4711b42169137b2ddf42ed4382e2babdf
         run: |
           set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/kernel"
-          git clone --quiet --filter=blob:none --no-checkout https://github.com/WireGuard/wireguard-linux-compat.git WireGuardCompat
-          git -C WireGuardCompat checkout --quiet --detach "${WG_PIN}"
-          test "$(git -C WireGuardCompat rev-parse HEAD)" = "${WG_PIN}"
           python3 "${GITHUB_WORKSPACE}/scripts/integrate_wireguard_419.py" "${GITHUB_WORKSPACE}/kernel"
-          echo "WIREGUARD_SOURCE_SHA=${WG_PIN}" >> "${GITHUB_ENV}"
+          echo "WIREGUARD_SOURCE_SHA=in-tree-${KERNEL_SOURCE_SHORT}" >> "${GITHUB_ENV}"
 
       - name: 应用 PowerSave 配置补丁
         if: inputs.mode == 'PowerSave'
