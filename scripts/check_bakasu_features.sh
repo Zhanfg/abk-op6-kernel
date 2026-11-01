@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate that BakaSU's optional manager support is *actually* compiled.
+# Verify compiled BakaSU Manual Hook features without SuSFS.
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
@@ -17,27 +17,25 @@ fail() { echo "[ERROR] BakaSU feature check: $*" >&2; exit 1; }
 [[ -s "$source_dir/uapi/supercall.h" ]] || fail "BakaSU UAPI missing"
 [[ -L "$source_dir/kernel/uapi" ]] || fail "BakaSU kernel UAPI symlink missing"
 [[ "$(realpath "$source_dir/kernel/uapi")" == "$(realpath "$source_dir/uapi")" ]] || fail "UAPI points at wrong version"
-grep -Fqx "CONFIG_KSU=y" "$config" || fail "CONFIG_KSU=y not effective"
-grep -Fqx "CONFIG_KSU_SUSFS=y" "$config" || fail "SuSFS inline hook not effective on Linux 4.19"
-grep -Fqx "CONFIG_KSU_MULTI_MANAGER_SUPPORT=y" "$config" || fail "multi-manager support not effective"
+
+grep -Fqx "CONFIG_KSU=y" "$config" || fail "KernelSU not effective"
+grep -Fqx "CONFIG_KSU_MANUAL_HOOK=y" "$config" || fail "Manual Hook not effective"
+if grep -Eq '^CONFIG_KSU_SUSFS([_A-Z0-9]*)=y$' "$config"; then
+  fail "SuSFS must be disabled in the BakaSU baseline"
+fi
+[[ ! -s "$kernel_root/out/fs/susfs.o" ]] || fail "SuSFS object was unexpectedly compiled"
+grep -Fqx "CONFIG_KSU_MULTI_MANAGER_SUPPORT=y" "$config" || fail "multi-manager not effective"
 ! grep -Fqx "CONFIG_KSU_DISABLE_MANAGER=y" "$config" || fail "manager integration disabled"
-[[ -s "$module_dir/feature/dynamic_manager.o" ]] || fail "dynamic manager object wasn't compiled"
-[[ -s "$module_dir/manager/throne_tracker.o" ]] || fail "manager tracker object wasn't compiled"
-# Linux 4.19 Kbuild archives built-in objects directly; not every build
-# emits the intermediate kernelsu.o composite. Verify the produced archive
-# and the actual dynamic-manager symbol instead of requiring that filename.
+[[ -s "$module_dir/feature/dynamic_manager.o" ]] || fail "dynamic manager object missing"
+[[ -s "$module_dir/manager/throne_tracker.o" ]] || fail "manager tracker object missing"
 [[ -s "$module_dir/built-in.a" ]] || fail "BakaSU built-in archive missing"
 command -v llvm-nm >/dev/null || fail "llvm-nm not installed"
-symbol_index="$(mktemp)"
-trap 'rm -f "$symbol_index"' EXIT
-llvm-nm --defined-only "$module_dir/built-in.a" > "$symbol_index" || fail "cannot read BakaSU archive symbols"
-grep -Eq '[[:space:]]ksu_handle_dynamic_manager
+
+symbols="$(mktemp)"
+trap 'rm -f "$symbols"' EXIT
+llvm-nm --defined-only "$module_dir/built-in.a" > "$symbols" || fail "cannot read archive symbols"
+grep -Eq '[[:space:]]ksu_handle_dynamic_manager$' "$symbols" || fail "dynamic manager implementation missing in archive"
 grep -Fq 'DYNAMIC_MANAGER_OP_SET' "$source_dir/uapi/supercall.h" || fail "dynamic-manager UAPI missing"
 
-echo "[OK] BakaSU Linux 4.19 SuSFS inline hook, multi-manager and dynamic-manager objects verified"
-echo "[INFO] Kernel-side verification only; dynamic manager persistent settings need matching BakaSU ksud/Manager"
- "$symbol_index" || fail "dynamic-manager symbol missing in built-in archive"
-grep -Fq 'DYNAMIC_MANAGER_OP_SET' "$source_dir/uapi/supercall.h" || fail "dynamic-manager UAPI missing"
-
-echo "[OK] BakaSU Linux 4.19 SuSFS inline hook, multi-manager and dynamic-manager objects verified"
-echo "[INFO] Kernel-side verification only; dynamic manager persistent settings need matching BakaSU ksud/Manager"
+echo "[OK] BakaSU Manual Hook, no SuSFS, multi-manager and dynamic-manager verified"
+echo "[INFO] Kernel-side checks only; boot/root/manager persistence require device testing"
