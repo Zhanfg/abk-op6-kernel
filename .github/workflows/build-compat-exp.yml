@@ -1,0 +1,25 @@
+name: Build OP6 Compatibility EXP
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/op6-compat-roadmap-20261101
+    paths:
+      - '.github/workflows/build-compat-exp.yml'
+      - '.github/workflows/build-kernel.yml'
+      - 'scripts/patch_bakasu_compat.py'
+      - 'scripts/integrate_wireguard_419.py'
+      - 'scripts/check_bakasu_features.sh'
+      - 'scripts/validate_kernel_source.sh'
+      - 'tests/test_build_contract.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-kernel.yml
+    with:
+      mode: CompatExp
+      bakasu_sha: 516d3e87fbc986ccefdde2c2765f1700612441a9
