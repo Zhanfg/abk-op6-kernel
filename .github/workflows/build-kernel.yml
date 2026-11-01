@@ -137,6 +137,15 @@ jobs:
             echo 'ROOT_ENGINE=BakaSU'
           } >> "${GITHUB_ENV}"
           echo "Pinned BakaSU ${BAKASU_PIN}, Linux 4.19 manual hook + existing SuSFS stays in kernel source"
+      - name: 补齐旧版 SuSFS 与 BakaSU 的线程标志接口
+        if: inputs.bakasu_sha != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "${GITHUB_WORKSPACE}/scripts/patch_bakasu_susfs_legacy.py" "${GITHUB_WORKSPACE}/kernel"
+          grep -Fq 'static inline bool susfs_is_current_proc_no_su' "${GITHUB_WORKSPACE}/kernel/include/linux/susfs_def.h"
+          grep -Fq 'static inline void susfs_set_current_proc_umounted_for_zygote_next' "${GITHUB_WORKSPACE}/kernel/include/linux/susfs_def.h"
+
       - name: 应用 PowerSave 配置补丁
         if: inputs.mode == 'PowerSave'
         shell: bash
