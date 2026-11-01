@@ -1,0 +1,188 @@
+name: OP6 Proven v0.2 Four-Manager WireGuard EXP
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/op6-proven-v02-compat-20261101
+    paths:
+      - '.github/workflows/build-proven-v02-compat.yml'
+      - 'scripts/patch_proven_bakasu.py'
+      - 'scripts/normalize_proven_op6_dtbs.py'
+      - 'scripts/check_op6_rom_dtb.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: op6-proven-v02-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # This EXACT source revision is present in the user-booted and Root-working v0.2 Boot.
+  GOOD_SOURCE_SHA: 9ad0027fcccbe0418f37368d01d24784e60892ea
+  GOOD_BAKASU_SHA: 5b76b884c75f729a220bb317aa4a4fc78f0e0e9c
+  ANYKERNEL_SHA: 1c9a500dd4aa8081952523126e97eb155aed941b
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout build harness
+        uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744
+        with:
+          persist-credentials: false
+
+      - name: Install proven Linux 4.19 toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git clang llvm lld ccache gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi bc bison flex build-essential \
+            libssl-dev libelf-dev device-tree-compiler cpio zip unzip python3
+          python3 -m py_compile scripts/patch_proven_bakasu.py scripts/normalize_proven_op6_dtbs.py scripts/check_op6_rom_dtb.py
+
+      - name: Restore build cache
+        uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639
+        with:
+          key: proven-v02-clang-419
+          max-size: 2G
+
+      - name: Checkout exact user-booted kernel tree
+        run: |
+          set -euo pipefail
+          mkdir kernel
+          git -C kernel init -q
+          git -C kernel remote add origin https://github.com/Zhanfg/android_kernel_oneplus_sdm845.git
+          git -C kernel fetch --depth=1 origin "${GOOD_SOURCE_SHA}"
+          git -C kernel checkout --detach FETCH_HEAD
+          test "$(git -C kernel rev-parse HEAD)" = "${GOOD_SOURCE_SHA}"
+          test -s kernel/scripts/setup-bakasu.sh
+          test -s kernel/arch/arm64/configs/vendor/enchilada.config
+          echo "BOOT_PROVEN_KERNEL_SHA=${GOOD_SOURCE_SHA}" >> "${GITHUB_ENV}"
+          echo "SOURCE_DATE_EPOCH=$(git -C kernel show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
+
+      - name: Pin exactly boot-proven BakaSU and patch only manager identification
+        run: |
+          set -euo pipefail
+          cd kernel
+          sh scripts/setup-bakasu.sh
+          test "$(git -C KernelSU rev-parse HEAD)" = "${GOOD_BAKASU_SHA}"
+          python3 ../scripts/patch_proven_bakasu.py .
+          test -L drivers/kernelsu
+          grep -Fq 'ksu_handle_sys_reboot' kernel/reboot.c
+          grep -Fq 'CONFIG_KSU_MANUAL_HOOK=y' arch/arm64/configs/vendor/enchilada.config
+          echo 'BakaSU v0.2 core and Manual Hook preserved'
+
+      - name: Reproduce proven device config and selectively enable WireGuard
+        run: |
+          set -euo pipefail
+          cd kernel
+          export PATH="/usr/lib/ccache:${PATH}"
+          ARGS=(O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_COMPAT=arm-linux-gnueabi- "CC=ccache clang" LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip LLVM=1)
+          make "${ARGS[@]}" vendor/sdm845-perf_defconfig
+          sh scripts/kconfig/merge_config.sh -m -O out out/.config arch/arm64/configs/vendor/enchilada.config
+          test -f drivers/net/wireguard/Makefile
+          grep -Fq 'config WIREGUARD' drivers/net/Kconfig
+          scripts/config --file out/.config --enable WIREGUARD --enable KSU_MULTI_MANAGER_SUPPORT --disable KSU_SUSFS --disable KSU_TOOLKIT_SUPPORT
+          make "${ARGS[@]}" olddefconfig
+          for key in CONFIG_KSU=y CONFIG_KSU_MANUAL_HOOK=y CONFIG_KSU_MULTI_MANAGER_SUPPORT=y CONFIG_WIREGUARD=y; do
+            grep -Fxq "$key" out/.config || { echo "::error::Missing effective $key"; exit 1; }
+          done
+          ! grep -Eq '^CONFIG_KSU_SUSFS([_A-Z0-9]*)=y$' out/.config
+          ! grep -Fxq 'CONFIG_KSU_TRACEPOINT_HOOK=y' out/.config
+          ! grep -Fxq 'CONFIG_KSU_TOOLKIT_SUPPORT=y' out/.config
+          mkdir -p ../dist
+          cp out/.config ../dist/kernel.config
+
+      - name: Compile, normalize device trees to proven boot, and inspect kernel
+        run: |
+          set -euo pipefail
+          cd kernel
+          export PATH="/usr/lib/ccache:${PATH}"
+          export KBUILD_BUILD_USER=op6proven
+          export KBUILD_BUILD_HOST=github
+          ARGS=(O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_COMPAT=arm-linux-gnueabi- "CC=ccache clang" LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip LLVM=1)
+          make -j"$(nproc)" "${ARGS[@]}" DTC_FLAGS=-@ dtbs
+          make -j"$(nproc)" "${ARGS[@]}" DTC_FLAGS=-@ Image.gz-dtb
+          IMAGE=out/arch/arm64/boot/Image.gz-dtb
+          test -s "$IMAGE"
+          python3 ../scripts/normalize_proven_op6_dtbs.py "$IMAGE" --in-place
+          python3 ../scripts/check_op6_rom_dtb.py "$IMAGE"
+          test -s out/drivers/kernelsu/built-in.a
+          test -s out/drivers/net/wireguard/main.o
+          llvm-nm --defined-only out/drivers/kernelsu/built-in.a > ../dist/ksu-symbols.txt
+          for sym in kernelsu_init ksu_handle_sys_reboot ksu_install_fd; do
+            grep -Eq "[[:space:]]${sym}$" ../dist/ksu-symbols.txt || { echo "::error::Missing KSU $sym"; exit 1; }
+          done
+          cp "$IMAGE" ../dist/Image.gz-dtb
+          sha256sum "$IMAGE" > ../dist/Image.gz-dtb.sha256
+          ccache -s
+
+      - name: Package isolated test-only AnyKernel3 artifact
+        run: |
+          set -euo pipefail
+          git init -q ak3
+          git -C ak3 remote add origin https://github.com/osm0sis/AnyKernel3.git
+          git -C ak3 fetch --depth=1 origin "${ANYKERNEL_SHA}"
+          git -C ak3 checkout -q --detach FETCH_HEAD
+          test "$(git -C ak3 rev-parse HEAD)" = "${ANYKERNEL_SHA}"
+          rm -rf ak3/.git ak3/.github
+          cp dist/Image.gz-dtb ak3/Image.gz-dtb
+          cat > ak3/anykernel.sh <<'AK3'
+          ### AnyKernel3 Ramdisk Mod Script
+          properties() { '
+          kernel.string=OP6 v0.2-proven base FourManager+WireGuard EXP - NOT BOOT TESTED
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=0
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=enchilada
+          device.name2=OnePlus6
+          device.name3=
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; }
+          BLOCK=boot;
+          IS_SLOT_DEVICE=auto;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          AK3
+          sed -i 's/^          //' ak3/anykernel.sh
+          cat > ak3/README-TEST-ONLY.txt <<'NOTE'
+          This package is compiled ONLY, not yet boot/root verified.
+          The proven 2026-10-10 v0.2 kernel is the source baseline.
+          Exact three original DTBs preserved, no dtbo partition payload.
+          Four manager certificate slots + WireGuard built in.
+          BakaSU Toolkit and 4.19 Tracepoint remain disabled pending boot test.
+          DO NOT FLASH THIS ZIP UNTIL TEMPORARY fastboot boot of a
+          correctly repacked full 64 MiB Boot image has PASSED.
+          Never use stock AOSP Recovery sideload for unsigned AnyKernel3.
+          NOTE
+          sed -i 's/^          //' ak3/README-TEST-ONLY.txt
+          cp dist/kernel.config ak3/kernel.config
+          test ! -f ak3/dtbo.img
+          ZIP=OP6_BakaSU_v02Proven_4Manager_WireGuard_NOT_BOOT_TESTED.zip
+          (cd ak3 && zip -qr9 "../dist/$ZIP" .)
+          unzip -tqq "dist/$ZIP"
+          unzip -Z1 "dist/$ZIP" | grep -Fxq Image.gz-dtb
+          ! unzip -Z1 "dist/$ZIP" | grep -Fxq dtbo.img
+          sha256sum "dist/$ZIP" > "dist/$ZIP.sha256"
+          echo "PACKAGE=${ZIP}" >> "${GITHUB_ENV}"
+          echo "WARNING: This build is NOT boot-tested. No OTA/fastboot flash."
+
+      - name: Upload exact artifact and full config
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: OP6-BakaSU-v02Proven-4Mgr-WG-TESTONLY
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
