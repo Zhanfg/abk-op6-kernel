@@ -136,15 +136,588 @@ jobs:
             echo "BAKASU_SOURCE_SHA=${BAKASU_PIN}"
             echo 'ROOT_ENGINE=BakaSU'
           } >> "${GITHUB_ENV}"
-          echo "Pinned BakaSU ${BAKASU_PIN}, Linux 4.19 SuSFS inline hook + legacy accessors kept in kernel source"
-      - name: 补齐旧版 SuSFS 与 BakaSU 的线程标志接口
+          echo "Pinned BakaSU ${BAKASU_PIN}, Linux 4.19 Manual Hook; SuSFS disabled for BakaSU"
+      - name: 禁用新版 BakaSU 的 SuSFS
         if: inputs.bakasu_sha != ''
         shell: bash
         run: |
           set -euo pipefail
-          python3 "${GITHUB_WORKSPACE}/scripts/patch_bakasu_susfs_legacy.py" "${GITHUB_WORKSPACE}/kernel"
-          grep -Fq 'static inline bool susfs_is_current_proc_no_su' "${GITHUB_WORKSPACE}/kernel/include/linux/susfs_def.h"
-          grep -Fq 'static inline void susfs_set_current_proc_umounted_for_zygote_next' "${GITHUB_WORKSPACE}/kernel/include/linux/susfs_def.h"
+          CFG="${GITHUB_WORKSPACE}/kernel/arch/arm64/configs/${DEFCONFIG}"
+          test -s "${CFG}"
+          # Keep existing 4.19 manual hooks; do not enable SuSFS inline mode.
+          sed -i '/^CONFIG_KSU_SUSFS[A-Z0-9_]*=/d' "${CFG}"
+          printf '%s\n' '# CONFIG_KSU_SUSFS is not set' >> "${CFG}"
+          grep -Fqx 'CONFIG_KSU_MANUAL_HOOK=y' "${CFG}"
+          ! grep -Eq '^CONFIG_KSU_SUSFS([_A-Z0-9]*)=y      - name: 应用 PowerSave 配置补丁
+        if: inputs.mode == 'PowerSave'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCH_FILE="${GITHUB_WORKSPACE}/scripts/powersave_defconfig.patch"
+          test -s "${PATCH_FILE}"
+          patch --directory="${GITHUB_WORKSPACE}/kernel" -p1 < "${PATCH_FILE}"
+          grep -E \
+            "PM_WAKELOCKS_GC|PM_AUTOSLEEP|WQ_POWER|CPU_BOOST|CPU_FREQ_DEFAULT_GOV|STEP_WISE|ADRENO_TZ" \
+            "${GITHUB_WORKSPACE}/kernel/arch/arm64/configs/vendor/enchilada_defconfig"
+
+      - name: 验证内核源码契约
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "${GITHUB_WORKSPACE}/scripts/validate_kernel_source.sh" \
+            "${GITHUB_WORKSPACE}/kernel" \
+            "arch/arm64/configs/${DEFCONFIG}" "${ROOT_ENGINE}"
+
+      - name: 下载固定版本 DTBO 工具
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/K-Blaaaack/mkdtboimg/${MKDTBOIMG_COMMIT}/mkdtboimg.py" \
+            --output /tmp/mkdtboimg.py
+          python3 -m py_compile /tmp/mkdtboimg.py
+
+      - name: 编译内核与设备树
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/kernel"
+          export PATH="/usr/lib/ccache:${PATH}"
+          export KBUILD_BUILD_USER=abk
+          export KBUILD_BUILD_HOST=github-actions
+          export KBUILD_BUILD_VERSION=1
+          export KBUILD_BUILD_TIMESTAMP="${KERNEL_BUILD_TIMESTAMP}"
+          export SOURCE_DATE_EPOCH
+
+          MAKE_ARGS=(
+            O=out ARCH=arm64
+            CROSS_COMPILE=aarch64-linux-gnu-
+            CLANG_TRIPLE=aarch64-linux-gnu-
+            "CC=ccache clang" LD=ld.lld
+            AR=llvm-ar NM=llvm-nm
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+            LLVM=1
+          )
+
+          make "${MAKE_ARGS[@]}" "${DEFCONFIG}"
+          if [[ -n "${BAKASU_SOURCE_SHA:-}" ]]; then
+            grep -Fqx 'CONFIG_KSU_MANUAL_HOOK=y' out/.config
+            ! grep -Eq '^CONFIG_KSU_SUSFS([_A-Z0-9]*)=y          make -j"$(nproc --all)" "${MAKE_ARGS[@]}" "DTC_FLAGS=-@" Image.gz-dtb dtbs
+          test -s out/arch/arm64/boot/Image.gz-dtb
+          if [[ -n "${BAKASU_SOURCE_SHA:-}" ]]; then
+            bash "${GITHUB_WORKSPACE}/scripts/check_bakasu_features.sh" "${GITHUB_WORKSPACE}/kernel"
+          fi
+
+          DTBO_DIR=out/arch/arm64/boot/dts/qcom
+          mapfile -t DTBO_FILES < <(
+            find "${DTBO_DIR}" -type f \
+              \( -name 'enchilada*.dtbo' -o -name 'fajita*.dtbo' -o -name 'sdm845*overlay.dtbo' \) \
+              -print | sort
+          )
+          [ "${#DTBO_FILES[@]}" -gt 0 ] || { echo "::error::No compiled DTBO files found"; exit 1; }
+          printf '%s\n' "${DTBO_FILES[@]}" > DTBO_FILES.txt
+          python3 /tmp/mkdtboimg.py create dtbo.img "${DTBO_FILES[@]}"
+          test -s dtbo.img
+          echo "Compiled ${#DTBO_FILES[@]} DTBO overlays"
+          ccache --show-stats
+
+      - name: 生成构建来源信息
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/kernel"
+          POWERSAVE_PATCH_SHA256=not-applied
+          if [ "${MODE}" = PowerSave ]; then
+            POWERSAVE_PATCH_SHA256="$(sha256sum "${GITHUB_WORKSPACE}/scripts/powersave_defconfig.patch" | awk '{print $1}')"
+          fi
+
+          {
+            echo "project=ABK OnePlus 6 Kernel"
+            echo "device=OnePlus 6"
+            echo "codename=enchilada"
+            echo "mode=${MODE}"
+            echo "kernel_source=${KERNEL_SOURCE}"
+            echo "kernel_branch=${KERNEL_BRANCH}"
+            echo "kernel_source_sha=${KERNEL_SOURCE_SHA}"
+            echo "root_engine=${ROOT_ENGINE}"
+            if [[ "${ROOT_ENGINE}" == BakaSU ]]; then
+              echo "susfs=disabled"
+            else
+              echo "susfs=enabled-legacy"
+            fi
+            echo "bakasu_source_sha=${BAKASU_SOURCE_SHA:-none}"
+            echo "dynamic_manager=${BAKASU_SOURCE_SHA:+compiled-verified}"
+            echo "fuse_zero_width_fix=not-bundled (external MediaProvider companion)"
+            echo "build_repository=${GITHUB_REPOSITORY}"
+            echo "build_repository_sha=${GITHUB_SHA}"
+            echo "workflow_run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "runner_image_os=${ImageOS:-unknown}"
+            echo "runner_image_version=${ImageVersion:-unknown}"
+            echo "build_timestamp_utc=${KERNEL_BUILD_TIMESTAMP}"
+            echo "clang=$(clang --version | head -n 1)"
+            echo "lld=$(ld.lld --version | head -n 1)"
+            echo "cross_gcc=$(aarch64-linux-gnu-gcc --version | head -n 1)"
+            echo "anykernel_commit=${ANYKERNEL_COMMIT}"
+            echo "mkdtboimg_commit=${MKDTBOIMG_COMMIT}"
+            echo "mkdtboimg_sha256=$(sha256sum /tmp/mkdtboimg.py | awk '{print $1}')"
+            echo "powersave_patch_sha256=${POWERSAVE_PATCH_SHA256}"
+            echo "image_gz_dtb_sha256=$(sha256sum out/arch/arm64/boot/Image.gz-dtb | awk '{print $1}')"
+            echo "dtbo_img_sha256=$(sha256sum dtbo.img | awk '{print $1}')"
+            echo "config_sha256=$(sha256sum out/.config | awk '{print $1}')"
+          } > BUILD_INFO.txt
+
+          cp out/.config kernel.config
+          sha256sum BUILD_INFO.txt kernel.config DTBO_FILES.txt > BUILD_METADATA.sha256
+
+      - name: 打包 AnyKernel3
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/kernel"
+          rm -rf AnyKernel3
+          mkdir AnyKernel3
+          git -C AnyKernel3 init
+          git -C AnyKernel3 remote add origin "${ANYKERNEL_REPOSITORY}"
+          git -C AnyKernel3 fetch --depth=1 origin "${ANYKERNEL_COMMIT}"
+          git -C AnyKernel3 checkout --detach FETCH_HEAD
+          test "$(git -C AnyKernel3 rev-parse HEAD)" = "${ANYKERNEL_COMMIT}"
+          rm -rf AnyKernel3/.git AnyKernel3/.github
+          rm -f AnyKernel3/tools/snapshotupdater_static
+
+          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
+          cp dtbo.img AnyKernel3/dtbo.img
+          cp BUILD_INFO.txt DTBO_FILES.txt AnyKernel3/
+
+          if [[ "${ROOT_ENGINE}" == BakaSU ]]; then
+            KERNEL_DESC="ABK OnePlus 6 ${MODE} BakaSU Manual Hook (${KERNEL_SOURCE_SHORT})"
+          else
+            KERNEL_DESC="ABK OnePlus 6 ${MODE} ${ROOT_ENGINE} + SuSFS 2.1.0 (${KERNEL_SOURCE_SHORT})"
+          fi
+          cat > AnyKernel3/anykernel.sh << EOF
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
+          properties() { '
+          kernel.string=${KERNEL_DESC}
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=0
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=enchilada
+          device.name2=OnePlus6
+          device.name3=
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; }
+          BLOCK=boot;
+          IS_SLOT_DEVICE=auto;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          EOF
+          sed -i 's/^          //' AnyKernel3/anykernel.sh
+
+          if [[ "${ROOT_ENGINE}" == BakaSU ]]; then
+            ZIP_NAME="ABK_OnePlus6_BakaSU_${MODE}_${KERNEL_SOURCE_SHORT}_$(date -u '+%Y%m%d-%H%M').zip"
+          else
+            ZIP_NAME="ABK_OnePlus6_${ROOT_ENGINE}_SuSFS210_${MODE}_${KERNEL_SOURCE_SHORT}_$(date -u '+%Y%m%d-%H%M').zip"
+          fi
+          (cd AnyKernel3 && zip -r9 "../${ZIP_NAME}" .)
+          unzip -l "${ZIP_NAME}" | grep -E 'Image.gz-dtb|dtbo.img|anykernel.sh|BUILD_INFO.txt|tools/ak3-core.sh'
+          sha256sum "${ZIP_NAME}" > "${ZIP_NAME}.sha256"
+          echo "ARTIFACT_NAME=${ZIP_NAME%.zip}" >> "${GITHUB_ENV}"
+          echo "ZIP_NAME=${ZIP_NAME}" >> "${GITHUB_ENV}"
+
+      - name: 生成构建摘要
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "# OnePlus 6 kernel build"
+            echo
+            echo "- Mode: \`${MODE}\`"
+            echo "- Kernel source SHA: \`${KERNEL_SOURCE_SHA}\`"
+            echo "- Root engine: \`${ROOT_ENGINE}\`"
+            echo "- BakaSU source SHA: \`${BAKASU_SOURCE_SHA:-not-applied}\`"
+            echo "- Dynamic Manager: \`${BAKASU_SOURCE_SHA:+object-verified}\`"
+            echo "- Artifact: \`${ZIP_NAME}\`"
+            echo "- SHA256: \`$(awk '{print $1}' "${GITHUB_WORKSPACE}/kernel/${ZIP_NAME}.sha256")\`"
+            echo
+            echo "Build Verified only; Boot and Runtime verification remain required."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: 上传 Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            kernel/ABK_OnePlus6_*.zip
+            kernel/ABK_OnePlus6_*.zip.sha256
+            kernel/BUILD_INFO.txt
+            kernel/BUILD_METADATA.sha256
+            kernel/DTBO_FILES.txt
+            kernel/kernel.config
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+ "${CFG}"
+          echo "BakaSU baseline: Manual Hook enabled; all SuSFS configs removed"
+
+      - name: 应用 PowerSave 配置补丁
+        if: inputs.mode == 'PowerSave'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCH_FILE="${GITHUB_WORKSPACE}/scripts/powersave_defconfig.patch"
+          test -s "${PATCH_FILE}"
+          patch --directory="${GITHUB_WORKSPACE}/kernel" -p1 < "${PATCH_FILE}"
+          grep -E \
+            "PM_WAKELOCKS_GC|PM_AUTOSLEEP|WQ_POWER|CPU_BOOST|CPU_FREQ_DEFAULT_GOV|STEP_WISE|ADRENO_TZ" \
+            "${GITHUB_WORKSPACE}/kernel/arch/arm64/configs/vendor/enchilada_defconfig"
+
+      - name: 验证内核源码契约
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "${GITHUB_WORKSPACE}/scripts/validate_kernel_source.sh" \
+            "${GITHUB_WORKSPACE}/kernel" \
+            "arch/arm64/configs/${DEFCONFIG}"
+
+      - name: 下载固定版本 DTBO 工具
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/K-Blaaaack/mkdtboimg/${MKDTBOIMG_COMMIT}/mkdtboimg.py" \
+            --output /tmp/mkdtboimg.py
+          python3 -m py_compile /tmp/mkdtboimg.py
+
+      - name: 编译内核与设备树
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/kernel"
+          export PATH="/usr/lib/ccache:${PATH}"
+          export KBUILD_BUILD_USER=abk
+          export KBUILD_BUILD_HOST=github-actions
+          export KBUILD_BUILD_VERSION=1
+          export KBUILD_BUILD_TIMESTAMP="${KERNEL_BUILD_TIMESTAMP}"
+          export SOURCE_DATE_EPOCH
+
+          MAKE_ARGS=(
+            O=out ARCH=arm64
+            CROSS_COMPILE=aarch64-linux-gnu-
+            CLANG_TRIPLE=aarch64-linux-gnu-
+            "CC=ccache clang" LD=ld.lld
+            AR=llvm-ar NM=llvm-nm
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+            LLVM=1
+          )
+
+          make "${MAKE_ARGS[@]}" "${DEFCONFIG}"
+          make -j"$(nproc --all)" "${MAKE_ARGS[@]}" "DTC_FLAGS=-@" Image.gz-dtb dtbs
+          test -s out/arch/arm64/boot/Image.gz-dtb
+          if [[ -n "${BAKASU_SOURCE_SHA:-}" ]]; then
+            bash "${GITHUB_WORKSPACE}/scripts/check_bakasu_features.sh" "${GITHUB_WORKSPACE}/kernel"
+          fi
+
+          DTBO_DIR=out/arch/arm64/boot/dts/qcom
+          mapfile -t DTBO_FILES < <(
+            find "${DTBO_DIR}" -type f \
+              \( -name 'enchilada*.dtbo' -o -name 'fajita*.dtbo' -o -name 'sdm845*overlay.dtbo' \) \
+              -print | sort
+          )
+          [ "${#DTBO_FILES[@]}" -gt 0 ] || { echo "::error::No compiled DTBO files found"; exit 1; }
+          printf '%s\n' "${DTBO_FILES[@]}" > DTBO_FILES.txt
+          python3 /tmp/mkdtboimg.py create dtbo.img "${DTBO_FILES[@]}"
+          test -s dtbo.img
+          echo "Compiled ${#DTBO_FILES[@]} DTBO overlays"
+          ccache --show-stats
+
+      - name: 生成构建来源信息
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/kernel"
+          POWERSAVE_PATCH_SHA256=not-applied
+          if [ "${MODE}" = PowerSave ]; then
+            POWERSAVE_PATCH_SHA256="$(sha256sum "${GITHUB_WORKSPACE}/scripts/powersave_defconfig.patch" | awk '{print $1}')"
+          fi
+
+          {
+            echo "project=ABK OnePlus 6 Kernel"
+            echo "device=OnePlus 6"
+            echo "codename=enchilada"
+            echo "mode=${MODE}"
+            echo "kernel_source=${KERNEL_SOURCE}"
+            echo "kernel_branch=${KERNEL_BRANCH}"
+            echo "kernel_source_sha=${KERNEL_SOURCE_SHA}"
+            echo "root_engine=${ROOT_ENGINE}"
+            echo "bakasu_source_sha=${BAKASU_SOURCE_SHA:-none}"
+            echo "dynamic_manager=${BAKASU_SOURCE_SHA:+compiled-verified}"
+            echo "fuse_zero_width_fix=not-bundled (external MediaProvider companion)"
+            echo "build_repository=${GITHUB_REPOSITORY}"
+            echo "build_repository_sha=${GITHUB_SHA}"
+            echo "workflow_run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "runner_image_os=${ImageOS:-unknown}"
+            echo "runner_image_version=${ImageVersion:-unknown}"
+            echo "build_timestamp_utc=${KERNEL_BUILD_TIMESTAMP}"
+            echo "clang=$(clang --version | head -n 1)"
+            echo "lld=$(ld.lld --version | head -n 1)"
+            echo "cross_gcc=$(aarch64-linux-gnu-gcc --version | head -n 1)"
+            echo "anykernel_commit=${ANYKERNEL_COMMIT}"
+            echo "mkdtboimg_commit=${MKDTBOIMG_COMMIT}"
+            echo "mkdtboimg_sha256=$(sha256sum /tmp/mkdtboimg.py | awk '{print $1}')"
+            echo "powersave_patch_sha256=${POWERSAVE_PATCH_SHA256}"
+            echo "image_gz_dtb_sha256=$(sha256sum out/arch/arm64/boot/Image.gz-dtb | awk '{print $1}')"
+            echo "dtbo_img_sha256=$(sha256sum dtbo.img | awk '{print $1}')"
+            echo "config_sha256=$(sha256sum out/.config | awk '{print $1}')"
+          } > BUILD_INFO.txt
+
+          cp out/.config kernel.config
+          sha256sum BUILD_INFO.txt kernel.config DTBO_FILES.txt > BUILD_METADATA.sha256
+
+      - name: 打包 AnyKernel3
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/kernel"
+          rm -rf AnyKernel3
+          mkdir AnyKernel3
+          git -C AnyKernel3 init
+          git -C AnyKernel3 remote add origin "${ANYKERNEL_REPOSITORY}"
+          git -C AnyKernel3 fetch --depth=1 origin "${ANYKERNEL_COMMIT}"
+          git -C AnyKernel3 checkout --detach FETCH_HEAD
+          test "$(git -C AnyKernel3 rev-parse HEAD)" = "${ANYKERNEL_COMMIT}"
+          rm -rf AnyKernel3/.git AnyKernel3/.github
+          rm -f AnyKernel3/tools/snapshotupdater_static
+
+          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
+          cp dtbo.img AnyKernel3/dtbo.img
+          cp BUILD_INFO.txt DTBO_FILES.txt AnyKernel3/
+
+          KERNEL_DESC="ABK OnePlus 6 ${MODE} ${ROOT_ENGINE} + SuSFS 2.1.00 (${KERNEL_SOURCE_SHORT})"
+          cat > AnyKernel3/anykernel.sh << EOF
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
+          properties() { '
+          kernel.string=${KERNEL_DESC}
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=0
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=enchilada
+          device.name2=OnePlus6
+          device.name3=
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; }
+          BLOCK=boot;
+          IS_SLOT_DEVICE=auto;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          EOF
+          sed -i 's/^          //' AnyKernel3/anykernel.sh
+
+          ZIP_NAME="ABK_OnePlus6_${ROOT_ENGINE}_SuSFS210_${MODE}_${KERNEL_SOURCE_SHORT}_$(date -u '+%Y%m%d-%H%M').zip"
+          (cd AnyKernel3 && zip -r9 "../${ZIP_NAME}" .)
+          unzip -l "${ZIP_NAME}" | grep -E 'Image.gz-dtb|dtbo.img|anykernel.sh|BUILD_INFO.txt|tools/ak3-core.sh'
+          sha256sum "${ZIP_NAME}" > "${ZIP_NAME}.sha256"
+          echo "ARTIFACT_NAME=${ZIP_NAME%.zip}" >> "${GITHUB_ENV}"
+          echo "ZIP_NAME=${ZIP_NAME}" >> "${GITHUB_ENV}"
+
+      - name: 生成构建摘要
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "# OnePlus 6 kernel build"
+            echo
+            echo "- Mode: \`${MODE}\`"
+            echo "- Kernel source SHA: \`${KERNEL_SOURCE_SHA}\`"
+            echo "- Root engine: \`${ROOT_ENGINE}\`"
+            echo "- BakaSU source SHA: \`${BAKASU_SOURCE_SHA:-not-applied}\`"
+            echo "- Dynamic Manager: \`${BAKASU_SOURCE_SHA:+object-verified}\`"
+            echo "- Artifact: \`${ZIP_NAME}\`"
+            echo "- SHA256: \`$(awk '{print $1}' "${GITHUB_WORKSPACE}/kernel/${ZIP_NAME}.sha256")\`"
+            echo
+            echo "Build Verified only; Boot and Runtime verification remain required."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: 上传 Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            kernel/ABK_OnePlus6_*.zip
+            kernel/ABK_OnePlus6_*.zip.sha256
+            kernel/BUILD_INFO.txt
+            kernel/BUILD_METADATA.sha256
+            kernel/DTBO_FILES.txt
+            kernel/kernel.config
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+ out/.config
+          fi
+          make -j"$(nproc --all)" "${MAKE_ARGS[@]}" "DTC_FLAGS=-@" Image.gz-dtb dtbs
+          test -s out/arch/arm64/boot/Image.gz-dtb
+          if [[ -n "${BAKASU_SOURCE_SHA:-}" ]]; then
+            bash "${GITHUB_WORKSPACE}/scripts/check_bakasu_features.sh" "${GITHUB_WORKSPACE}/kernel"
+          fi
+
+          DTBO_DIR=out/arch/arm64/boot/dts/qcom
+          mapfile -t DTBO_FILES < <(
+            find "${DTBO_DIR}" -type f \
+              \( -name 'enchilada*.dtbo' -o -name 'fajita*.dtbo' -o -name 'sdm845*overlay.dtbo' \) \
+              -print | sort
+          )
+          [ "${#DTBO_FILES[@]}" -gt 0 ] || { echo "::error::No compiled DTBO files found"; exit 1; }
+          printf '%s\n' "${DTBO_FILES[@]}" > DTBO_FILES.txt
+          python3 /tmp/mkdtboimg.py create dtbo.img "${DTBO_FILES[@]}"
+          test -s dtbo.img
+          echo "Compiled ${#DTBO_FILES[@]} DTBO overlays"
+          ccache --show-stats
+
+      - name: 生成构建来源信息
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/kernel"
+          POWERSAVE_PATCH_SHA256=not-applied
+          if [ "${MODE}" = PowerSave ]; then
+            POWERSAVE_PATCH_SHA256="$(sha256sum "${GITHUB_WORKSPACE}/scripts/powersave_defconfig.patch" | awk '{print $1}')"
+          fi
+
+          {
+            echo "project=ABK OnePlus 6 Kernel"
+            echo "device=OnePlus 6"
+            echo "codename=enchilada"
+            echo "mode=${MODE}"
+            echo "kernel_source=${KERNEL_SOURCE}"
+            echo "kernel_branch=${KERNEL_BRANCH}"
+            echo "kernel_source_sha=${KERNEL_SOURCE_SHA}"
+            echo "root_engine=${ROOT_ENGINE}"
+            echo "bakasu_source_sha=${BAKASU_SOURCE_SHA:-none}"
+            echo "dynamic_manager=${BAKASU_SOURCE_SHA:+compiled-verified}"
+            echo "fuse_zero_width_fix=not-bundled (external MediaProvider companion)"
+            echo "build_repository=${GITHUB_REPOSITORY}"
+            echo "build_repository_sha=${GITHUB_SHA}"
+            echo "workflow_run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "runner_image_os=${ImageOS:-unknown}"
+            echo "runner_image_version=${ImageVersion:-unknown}"
+            echo "build_timestamp_utc=${KERNEL_BUILD_TIMESTAMP}"
+            echo "clang=$(clang --version | head -n 1)"
+            echo "lld=$(ld.lld --version | head -n 1)"
+            echo "cross_gcc=$(aarch64-linux-gnu-gcc --version | head -n 1)"
+            echo "anykernel_commit=${ANYKERNEL_COMMIT}"
+            echo "mkdtboimg_commit=${MKDTBOIMG_COMMIT}"
+            echo "mkdtboimg_sha256=$(sha256sum /tmp/mkdtboimg.py | awk '{print $1}')"
+            echo "powersave_patch_sha256=${POWERSAVE_PATCH_SHA256}"
+            echo "image_gz_dtb_sha256=$(sha256sum out/arch/arm64/boot/Image.gz-dtb | awk '{print $1}')"
+            echo "dtbo_img_sha256=$(sha256sum dtbo.img | awk '{print $1}')"
+            echo "config_sha256=$(sha256sum out/.config | awk '{print $1}')"
+          } > BUILD_INFO.txt
+
+          cp out/.config kernel.config
+          sha256sum BUILD_INFO.txt kernel.config DTBO_FILES.txt > BUILD_METADATA.sha256
+
+      - name: 打包 AnyKernel3
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/kernel"
+          rm -rf AnyKernel3
+          mkdir AnyKernel3
+          git -C AnyKernel3 init
+          git -C AnyKernel3 remote add origin "${ANYKERNEL_REPOSITORY}"
+          git -C AnyKernel3 fetch --depth=1 origin "${ANYKERNEL_COMMIT}"
+          git -C AnyKernel3 checkout --detach FETCH_HEAD
+          test "$(git -C AnyKernel3 rev-parse HEAD)" = "${ANYKERNEL_COMMIT}"
+          rm -rf AnyKernel3/.git AnyKernel3/.github
+          rm -f AnyKernel3/tools/snapshotupdater_static
+
+          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
+          cp dtbo.img AnyKernel3/dtbo.img
+          cp BUILD_INFO.txt DTBO_FILES.txt AnyKernel3/
+
+          KERNEL_DESC="ABK OnePlus 6 ${MODE} ${ROOT_ENGINE} + SuSFS 2.1.00 (${KERNEL_SOURCE_SHORT})"
+          cat > AnyKernel3/anykernel.sh << EOF
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
+          properties() { '
+          kernel.string=${KERNEL_DESC}
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=0
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=enchilada
+          device.name2=OnePlus6
+          device.name3=
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; }
+          BLOCK=boot;
+          IS_SLOT_DEVICE=auto;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          EOF
+          sed -i 's/^          //' AnyKernel3/anykernel.sh
+
+          ZIP_NAME="ABK_OnePlus6_${ROOT_ENGINE}_SuSFS210_${MODE}_${KERNEL_SOURCE_SHORT}_$(date -u '+%Y%m%d-%H%M').zip"
+          (cd AnyKernel3 && zip -r9 "../${ZIP_NAME}" .)
+          unzip -l "${ZIP_NAME}" | grep -E 'Image.gz-dtb|dtbo.img|anykernel.sh|BUILD_INFO.txt|tools/ak3-core.sh'
+          sha256sum "${ZIP_NAME}" > "${ZIP_NAME}.sha256"
+          echo "ARTIFACT_NAME=${ZIP_NAME%.zip}" >> "${GITHUB_ENV}"
+          echo "ZIP_NAME=${ZIP_NAME}" >> "${GITHUB_ENV}"
+
+      - name: 生成构建摘要
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "# OnePlus 6 kernel build"
+            echo
+            echo "- Mode: \`${MODE}\`"
+            echo "- Kernel source SHA: \`${KERNEL_SOURCE_SHA}\`"
+            echo "- Root engine: \`${ROOT_ENGINE}\`"
+            echo "- BakaSU source SHA: \`${BAKASU_SOURCE_SHA:-not-applied}\`"
+            echo "- Dynamic Manager: \`${BAKASU_SOURCE_SHA:+object-verified}\`"
+            echo "- Artifact: \`${ZIP_NAME}\`"
+            echo "- SHA256: \`$(awk '{print $1}' "${GITHUB_WORKSPACE}/kernel/${ZIP_NAME}.sha256")\`"
+            echo
+            echo "Build Verified only; Boot and Runtime verification remain required."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: 上传 Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            kernel/ABK_OnePlus6_*.zip
+            kernel/ABK_OnePlus6_*.zip.sha256
+            kernel/BUILD_INFO.txt
+            kernel/BUILD_METADATA.sha256
+            kernel/DTBO_FILES.txt
+            kernel/kernel.config
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+ "${CFG}"
+          echo "BakaSU baseline: Manual Hook enabled; all SuSFS configs removed"
 
       - name: 应用 PowerSave 配置补丁
         if: inputs.mode == 'PowerSave'
