@@ -18,7 +18,7 @@ fail() { echo "[ERROR] BakaSU feature check: $*" >&2; exit 1; }
 [[ -L "$source_dir/kernel/uapi" ]] || fail "BakaSU kernel UAPI symlink missing"
 [[ "$(realpath "$source_dir/kernel/uapi")" == "$(realpath "$source_dir/uapi")" ]] || fail "UAPI points at wrong version"
 grep -Fqx "CONFIG_KSU=y" "$config" || fail "CONFIG_KSU=y not effective"
-grep -Fqx "CONFIG_KSU_MANUAL_HOOK=y" "$config" || fail "Linux 4.19 manual hook not effective"
+grep -Fqx "CONFIG_KSU_SUSFS=y" "$config" || fail "SuSFS inline hook not effective on Linux 4.19"
 grep -Fqx "CONFIG_KSU_MULTI_MANAGER_SUPPORT=y" "$config" || fail "multi-manager support not effective"
 ! grep -Fqx "CONFIG_KSU_DISABLE_MANAGER=y" "$config" || fail "manager integration disabled"
 [[ -s "$module_dir/feature/dynamic_manager.o" ]] || fail "dynamic manager object wasn't compiled"
@@ -26,5 +26,5 @@ grep -Fqx "CONFIG_KSU_MULTI_MANAGER_SUPPORT=y" "$config" || fail "multi-manager 
 [[ -s "$module_dir/kernelsu.o" ]] || fail "BakaSU composite object wasn't compiled"
 grep -Fq 'DYNAMIC_MANAGER_OP_SET' "$source_dir/uapi/supercall.h" || fail "dynamic-manager UAPI missing"
 
-echo "[OK] BakaSU Linux 4.19 Manual Hook, multi-manager and dynamic-manager objects verified"
+echo "[OK] BakaSU Linux 4.19 SuSFS inline hook, multi-manager and dynamic-manager objects verified"
 echo "[INFO] Kernel-side verification only; dynamic manager persistent settings need matching BakaSU ksud/Manager"
