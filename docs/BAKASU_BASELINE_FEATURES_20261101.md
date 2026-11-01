@@ -1,29 +1,21 @@
-# OnePlus 6 BakaSU baseline: feature and patch scope
+# OnePlus 6 — BakaSU baseline without SuSFS
 
-## Kernel build
+## Scope
 
-The build workflow tracks BakaSU main at pinned commit `516d3e87fbc986ccefdde2c2765f1700612441a9`. It preserves OnePlus 6 Linux 4.19.325 and the existing defconfig, SuSFS inline hook, and pre-existing SuSFS source patches. It does not automatically migrate newer GKI-only features or introduce tuning.
+- Device: OnePlus 6 (enchilada), Linux 4.19.325.
+- BakaSU pinned to `516d3e87fbc986ccefdde2c2765f1700612441a9`.
+- Root mode: **CONFIG_KSU_MANUAL_HOOK=y**. This is the Linux 4.19-supported hook path.
+- **SuSFS disabled**: `CONFIG_KSU_SUSFS` and all `CONFIG_KSU_SUSFS_*` are removed from the BakaSU build config. Legacy kernel SuSFS source files may remain in the source tree but are not compiled or packaged into the BakaSU build.
+- BakaSU Dynamic Manager and multi-manager functionality are retained. Runtime management still requires matching userspace Manager and ksud.
+- Existing ReSukiSU PowerSave workflow is a distinct legacy variant; it is not the requested new baseline.
+- No performance tuning or FUSE/zero-width changes in the baseline.
 
-### Dynamic Manager
+## Verification
 
-BakaSU already includes `feature/dynamic_manager.c`, manager tracking, and `supercall` support. Unlike a separately applied patch, it is part of BakaSU's built-in kernel sources whenever KernelSU manager integration is enabled.
+The workflow checks effective `out/.config`, forbids enabled SuSFS symbols and `out/fs/susfs.o`, checks BakaSU `dynamic_manager.o`, `throne_tracker.o`, and built-in archive symbol `ksu_handle_dynamic_manager`. Build artifact names and AnyKernel3 label do not claim SuSFS for BakaSU.
 
-The workflow verifies the *effective* `out/.config` and the compiled `dynamic_manager.o`, `throne_tracker.o`, and `kernelsu.o` files. A successful source checkout alone does not prove successful compilation.
+Passing CI means only that the kernel compiles, links, and packages. Device boot, root privilege behavior, system compatibility, and Manager persistence require physical testing. Keep the original boot image for rollback.
 
-Dynamic-manager settings are not embedded into the kernel image. The corresponding BakaSU Manager and updated `ksud` provide the configuration UI, user authorization, and persistent reloading from `/data/adb/ksu/.dynamic_manager`. Do not preauthorize or silently switch management packages during the kernel build.
+## History
 
-### Unicode zero-width / FUSE
-
-The `drivers/tty/vt/consolemap.c` code's zero-width handling affects the Linux virtual terminal glyph mapper; **it does not fix Android MediaProvider FUSE package-visibility leaks**.
-
-The separate upstream [FuseFixer](https://github.com/5ec1cff/FuseFixer) is an Xposed/LSPosed hook of MediaProvider's FUSE daemon. It cannot be reliably merged by copying a general kernel patch into a Linux 4.19 source tree; it also documents additional FUSE BPF issues that its app hook does not fully solve. It is **not bundled** or automatically enabled, nor is the false claim made that the core kernel alone fixes that Android-level issue.
-
-For device-specific remediation, validate the installed Android MediaProvider, filesystem casefold mode, FUSE/sdcardfs configuration, and existence of FUSE BPF support before attempting any kernel-side backport.
-
-## Legacy SuSFS API bridge
-
-The existing 4.19 source has SuSFS v2.1.0 but omits the no-su and zygote-next thread-flag accessors used by recent BakaSU's SuSFS inline path. The build step backports upstream SuSFS 2.x thread flags 34 and 35 and the corresponding real test/set/clear accessors. This corrects four unresolved linker references without no-op stubs or disabling SuSFS. It does not establish equivalence with newer SuSFS VFS behavior and still requires device testing.
-
-## Build vs boot verification
-
-CI validates compiling the kernel and packaging AnyKernel3; it cannot verify boot, root, dynamic-manager persistence, module mounts, or Android/data access control on the physical phone. Keep the original boot.img for rollback.
+Initial integration incorrectly required the SuSFS inline hook; the original baseline request did not. A missing SuSFS thread helper caused an earlier linker failure, and then an overstrict check expected an intermediate `kernelsu.o` that Linux 4.19 Kbuild did not emit. Both were addressed by removing SuSFS from the BakaSU build and validating the actual built-in archive instead of a nonexistent intermediate object.
