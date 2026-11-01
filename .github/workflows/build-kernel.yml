@@ -122,6 +122,11 @@ jobs:
           test "$(git -C BakaSU rev-parse HEAD)" = "${BAKASU_PIN}"
           test -s BakaSU/kernel/Kbuild
           test -s BakaSU/kernel/Kconfig
+          test -s BakaSU/uapi/supercall.h
+          # BakaSU keeps shared UAPI outside its kernel/ subtree. Link it so
+          # Linux 4.19's in-tree Kbuild includes resolve to this same pinned tree.
+          test ! -e BakaSU/kernel/uapi
+          ln -s ../uapi BakaSU/kernel/uapi
           test -d drivers/kernelsu
           mv drivers/kernelsu drivers/kernelsu.legacy
           ln -s ../BakaSU/kernel drivers/kernelsu
@@ -186,6 +191,9 @@ jobs:
           make "${MAKE_ARGS[@]}" "${DEFCONFIG}"
           make -j"$(nproc --all)" "${MAKE_ARGS[@]}" "DTC_FLAGS=-@" Image.gz-dtb dtbs
           test -s out/arch/arm64/boot/Image.gz-dtb
+          if [[ -n "${BAKASU_SOURCE_SHA:-}" ]]; then
+            bash "${GITHUB_WORKSPACE}/scripts/check_bakasu_features.sh" "${GITHUB_WORKSPACE}/kernel"
+          fi
 
           DTBO_DIR=out/arch/arm64/boot/dts/qcom
           mapfile -t DTBO_FILES < <(
@@ -220,6 +228,8 @@ jobs:
             echo "kernel_source_sha=${KERNEL_SOURCE_SHA}"
             echo "root_engine=${ROOT_ENGINE}"
             echo "bakasu_source_sha=${BAKASU_SOURCE_SHA:-none}"
+            echo "dynamic_manager=${BAKASU_SOURCE_SHA:+compiled-verified}"
+            echo "fuse_zero_width_fix=not-bundled (external MediaProvider companion)"
             echo "build_repository=${GITHUB_REPOSITORY}"
             echo "build_repository_sha=${GITHUB_SHA}"
             echo "workflow_run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
@@ -306,6 +316,7 @@ jobs:
             echo "- Kernel source SHA: \`${KERNEL_SOURCE_SHA}\`"
             echo "- Root engine: \`${ROOT_ENGINE}\`"
             echo "- BakaSU source SHA: \`${BAKASU_SOURCE_SHA:-not-applied}\`"
+            echo "- Dynamic Manager: \`${BAKASU_SOURCE_SHA:+object-verified}\`"
             echo "- Artifact: \`${ZIP_NAME}\`"
             echo "- SHA256: \`$(awk '{print $1}' "${GITHUB_WORKSPACE}/kernel/${ZIP_NAME}.sha256")\`"
             echo
