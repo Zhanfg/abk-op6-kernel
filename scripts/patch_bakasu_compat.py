@@ -117,11 +117,6 @@ def main() -> None:
         "    if (!capable(CAP_SYS_ADMIN))\n"
         "        return 0;\n",
     )
-    replace_exact(
-        disp,
-        '#include <linux/err.h>\n',
-        '#include <linux/err.h>\n#include <linux/capability.h>\n',
-    )
     print("[OK] BakaSU Next/SukiSU certificate slots, manager removal fix and Toolkit CAP_SYS_ADMIN gate applied")
 
 
