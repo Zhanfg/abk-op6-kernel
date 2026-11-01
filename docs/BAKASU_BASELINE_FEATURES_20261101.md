@@ -2,7 +2,7 @@
 
 ## Kernel build
 
-The build workflow tracks BakaSU main at pinned commit `516d3e87fbc986ccefdde2c2765f1700612441a9`. It preserves OnePlus 6 Linux 4.19.325 and the existing defconfig, manual hook, and pre-existing SuSFS source patches. It does not automatically migrate newer GKI-only features or introduce tuning.
+The build workflow tracks BakaSU main at pinned commit `516d3e87fbc986ccefdde2c2765f1700612441a9`. It preserves OnePlus 6 Linux 4.19.325 and the existing defconfig, SuSFS inline hook, and pre-existing SuSFS source patches. It does not automatically migrate newer GKI-only features or introduce tuning.
 
 ### Dynamic Manager
 
@@ -19,6 +19,10 @@ The `drivers/tty/vt/consolemap.c` code's zero-width handling affects the Linux v
 The separate upstream [FuseFixer](https://github.com/5ec1cff/FuseFixer) is an Xposed/LSPosed hook of MediaProvider's FUSE daemon. It cannot be reliably merged by copying a general kernel patch into a Linux 4.19 source tree; it also documents additional FUSE BPF issues that its app hook does not fully solve. It is **not bundled** or automatically enabled, nor is the false claim made that the core kernel alone fixes that Android-level issue.
 
 For device-specific remediation, validate the installed Android MediaProvider, filesystem casefold mode, FUSE/sdcardfs configuration, and existence of FUSE BPF support before attempting any kernel-side backport.
+
+## Legacy SuSFS API bridge
+
+The existing 4.19 source has SuSFS v2.1.0 but omits the no-su and zygote-next thread-flag accessors used by recent BakaSU's SuSFS inline path. The build step backports upstream SuSFS 2.x thread flags 34 and 35 and the corresponding real test/set/clear accessors. This corrects four unresolved linker references without no-op stubs or disabling SuSFS. It does not establish equivalence with newer SuSFS VFS behavior and still requires device testing.
 
 ## Build vs boot verification
 
