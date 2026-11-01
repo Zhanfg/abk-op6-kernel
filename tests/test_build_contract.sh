@@ -80,4 +80,21 @@ if bash "$validator" "$kernel" "$defconfig_rel"; then
 fi
 mv "$kernel/drivers/Makefile.good" "$kernel/drivers/Makefile"
 
-echo "[OK] ABK build-contract tests passed"
+# BakaSU uses the existing Linux 4.19 Manual Hook without any SuSFS.
+if bash "$validator" "$kernel" "$defconfig_rel" BakaSU; then
+  echo "expected SuSFS-enabled fixture to be rejected for BakaSU" >&2
+  exit 1
+fi
+
+cp "$kernel/$defconfig_rel" "$kernel/$defconfig_rel.legacy"
+sed -i '/^CONFIG_KSU_SUSFS[A-Z0-9_]*=/d' "$kernel/$defconfig_rel"
+printf '%s\n' '# CONFIG_KSU_SUSFS is not set' >> "$kernel/$defconfig_rel"
+bash "$validator" "$kernel" "$defconfig_rel" BakaSU
+
+if bash "$validator" "$kernel" "$defconfig_rel" ReSukiSU; then
+  echo "expected SuSFS-free fixture to be rejected by legacy ReSukiSU" >&2
+  exit 1
+fi
+mv "$kernel/$defconfig_rel.legacy" "$kernel/$defconfig_rel"
+
+echo "[OK] ABK build-contract tests passed (BakaSU no SuSFS + legacy ReSukiSU)"

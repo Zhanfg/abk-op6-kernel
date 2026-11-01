@@ -22,3 +22,4 @@ jobs:
     uses: ./.github/workflows/build-kernel.yml
     with:
       mode: Standard
+      bakasu_sha: 516d3e87fbc986ccefdde2c2765f1700612441a9
