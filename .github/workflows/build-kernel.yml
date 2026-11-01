@@ -83,7 +83,7 @@ jobs:
         uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639 # v1.2
         with:
           max-size: 2G
-          key: build-enchilada-4.19-${{ inputs.mode }}
+          key: build-enchilada-4.19-${{ inputs.mode == 'CompatExp' && 'Standard' || inputs.mode }}
 
       - name: 固定并检出内核源码
         shell: bash
