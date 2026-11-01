@@ -7,6 +7,11 @@ on:
         description: Build variant
         required: true
         type: string
+      bakasu_sha:
+        description: Pinned BakaSU source commit; empty retains legacy ReSukiSU
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -20,6 +25,7 @@ env:
   KERNEL_BRANCH: master
   DEFCONFIG: vendor/enchilada_defconfig
   MODE: ${{ inputs.mode }}
+  ROOT_ENGINE: ReSukiSU
   ANYKERNEL_REPOSITORY: https://github.com/osm0sis/AnyKernel3.git
   ANYKERNEL_COMMIT: 1c9a500dd4aa8081952523126e97eb155aed941b
   MKDTBOIMG_COMMIT: ca53bdb6c8ae5aaa890d4afebe66af55cfd906c8
@@ -102,6 +108,30 @@ jobs:
             echo "KERNEL_BUILD_TIMESTAMP=$(date -u -d "@${SOURCE_EPOCH}" '+%Y-%m-%d %H:%M:%S')"
           } >> "${GITHUB_ENV}"
 
+      - name: 接入固定上游 BakaSU 核心
+        if: inputs.bakasu_sha != ''
+        shell: bash
+        env:
+          BAKASU_PIN: ${{ inputs.bakasu_sha }}
+        run: |
+          set -euo pipefail
+          [[ "${BAKASU_PIN}" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::BakaSU commit must be a full SHA'; exit 1; }
+          cd "${GITHUB_WORKSPACE}/kernel"
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/Baka-SU/BakaSU.git BakaSU
+          git -C BakaSU checkout --quiet --detach "${BAKASU_PIN}"
+          test "$(git -C BakaSU rev-parse HEAD)" = "${BAKASU_PIN}"
+          test -s BakaSU/kernel/Kbuild
+          test -s BakaSU/kernel/Kconfig
+          test -d drivers/kernelsu
+          mv drivers/kernelsu drivers/kernelsu.legacy
+          ln -s ../BakaSU/kernel drivers/kernelsu
+          test -f drivers/kernelsu/Kbuild
+          test -f drivers/kernelsu/Kconfig
+          {
+            echo "BAKASU_SOURCE_SHA=${BAKASU_PIN}"
+            echo 'ROOT_ENGINE=BakaSU'
+          } >> "${GITHUB_ENV}"
+          echo "Pinned BakaSU ${BAKASU_PIN}, Linux 4.19 manual hook + existing SuSFS stays in kernel source"
       - name: 应用 PowerSave 配置补丁
         if: inputs.mode == 'PowerSave'
         shell: bash
@@ -188,6 +218,8 @@ jobs:
             echo "kernel_source=${KERNEL_SOURCE}"
             echo "kernel_branch=${KERNEL_BRANCH}"
             echo "kernel_source_sha=${KERNEL_SOURCE_SHA}"
+            echo "root_engine=${ROOT_ENGINE}"
+            echo "bakasu_source_sha=${BAKASU_SOURCE_SHA:-none}"
             echo "build_repository=${GITHUB_REPOSITORY}"
             echo "build_repository_sha=${GITHUB_SHA}"
             echo "workflow_run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
@@ -228,7 +260,7 @@ jobs:
           cp dtbo.img AnyKernel3/dtbo.img
           cp BUILD_INFO.txt DTBO_FILES.txt AnyKernel3/
 
-          KERNEL_DESC="ABK OnePlus 6 ${MODE} ReSukiSU + SuSFS 2.1.00 (${KERNEL_SOURCE_SHORT})"
+          KERNEL_DESC="ABK OnePlus 6 ${MODE} ${ROOT_ENGINE} + SuSFS 2.1.00 (${KERNEL_SOURCE_SHORT})"
           cat > AnyKernel3/anykernel.sh << EOF
           ### AnyKernel3 Ramdisk Mod Script
           ## osm0sis @ xda-developers
@@ -256,7 +288,7 @@ jobs:
           EOF
           sed -i 's/^          //' AnyKernel3/anykernel.sh
 
-          ZIP_NAME="ABK_OnePlus6_ReSukiSU_SuSFS210_${MODE}_${KERNEL_SOURCE_SHORT}_$(date -u '+%Y%m%d-%H%M').zip"
+          ZIP_NAME="ABK_OnePlus6_${ROOT_ENGINE}_SuSFS210_${MODE}_${KERNEL_SOURCE_SHORT}_$(date -u '+%Y%m%d-%H%M').zip"
           (cd AnyKernel3 && zip -r9 "../${ZIP_NAME}" .)
           unzip -l "${ZIP_NAME}" | grep -E 'Image.gz-dtb|dtbo.img|anykernel.sh|BUILD_INFO.txt|tools/ak3-core.sh'
           sha256sum "${ZIP_NAME}" > "${ZIP_NAME}.sha256"
@@ -272,6 +304,8 @@ jobs:
             echo
             echo "- Mode: \`${MODE}\`"
             echo "- Kernel source SHA: \`${KERNEL_SOURCE_SHA}\`"
+            echo "- Root engine: \`${ROOT_ENGINE}\`"
+            echo "- BakaSU source SHA: \`${BAKASU_SOURCE_SHA:-not-applied}\`"
             echo "- Artifact: \`${ZIP_NAME}\`"
             echo "- SHA256: \`$(awk '{print $1}' "${GITHUB_WORKSPACE}/kernel/${ZIP_NAME}.sha256")\`"
             echo
