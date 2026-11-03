@@ -169,6 +169,14 @@ jobs:
           bash "${GITHUB_WORKSPACE}/scripts/validate_kernel_source.sh" \
             "${GITHUB_WORKSPACE}/kernel" \
             "arch/arm64/configs/${DEFCONFIG}" "${ROOT_ENGINE}"
+          # Kernel-side Freezer prerequisites. On Android 17, Binder frozen
+          # transaction/callback support is a separate capability.
+          test "$(grep -Fc 'CONFIG_CGROUPS=y' "${GITHUB_WORKSPACE}/kernel/arch/arm64/configs/${DEFCONFIG}")" -eq 1
+          grep -Fqx 'CONFIG_CGROUP_FREEZER=y' "${GITHUB_WORKSPACE}/kernel/arch/arm64/configs/${DEFCONFIG}"
+          grep -Fq '"cgroup.freeze"' "${GITHUB_WORKSPACE}/kernel/kernel/cgroup/cgroup.c"
+          grep -Fq '"cgroup.events"' "${GITHUB_WORKSPACE}/kernel/kernel/cgroup/cgroup.c"
+          grep -Fq 'CGRP_FROZEN' "${GITHUB_WORKSPACE}/kernel/kernel/cgroup/freezer.c"
+          echo "[OK] cgroup v2 Freezer source and defconfig prerequisites"
 
       - name: 下载固定版本 DTBO 工具
         shell: bash
@@ -202,6 +210,9 @@ jobs:
           )
 
           make "${MAKE_ARGS[@]}" "${DEFCONFIG}"
+          grep -Fqx 'CONFIG_CGROUPS=y' out/.config
+          grep -Fqx 'CONFIG_CGROUP_FREEZER=y' out/.config
+          grep -Fqx 'CONFIG_ANDROID_BINDER_IPC=y' out/.config
           if [[ -n "${BAKASU_SOURCE_SHA:-}" ]]; then
             grep -Fqx 'CONFIG_KSU_MANUAL_HOOK=y' out/.config
             ! grep -Eq '^CONFIG_KSU_SUSFS([_A-Z0-9]*)=y$' out/.config
@@ -252,6 +263,10 @@ jobs:
             echo "bakasu_source_sha=${BAKASU_SOURCE_SHA:-none}"
             echo "dynamic_manager=${BAKASU_SOURCE_SHA:+compiled-verified}"
             echo "fuse_zero_width_fix=not-bundled (external MediaProvider companion)"
+            echo "cgroup_v2_freezer=source-and-final-config-verified"
+            echo "binder_frozen_state_callbacks=not-verified"
+            echo "ota_dtbo=preserved-by-AK3"
+            echo "ota_source_sync=not-claimed (existing custom source branch)"
             echo "build_repository=${GITHUB_REPOSITORY}"
             echo "build_repository_sha=${GITHUB_SHA}"
             echo "workflow_run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
@@ -289,8 +304,20 @@ jobs:
           rm -f AnyKernel3/tools/snapshotupdater_static
 
           cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
-          cp dtbo.img AnyKernel3/dtbo.img
+          # Do NOT flash the old compiled 9-overlay DTBO on a new OTA with a
+          # different 16-overlay DTBO. Keep the installed slot DTBO intact.
           cp BUILD_INFO.txt DTBO_FILES.txt AnyKernel3/
+          cat > AnyKernel3/FREEZER_CAPABILITIES.txt << 'EOF'
+          OnePlus 6 Android 17 / Linux 4.19 - Freezer capability audit
+          cgroup v2 freezer: kernel source and final config checks passed
+          Kernel exposure: cgroup.freeze and cgroup.events are present in source
+          Android 17 Native Binder frozen callbacks: NOT validated or guaranteed
+          Device setup: mounted cgroup v2 hierarchy and userspace policy required
+          OTA compatibility: AK3 deliberately does NOT overwrite DTBO
+          BakaSU: existing Manual Hook + multi-manager baseline retained
+          Verification: Build Verified only; physical boot and freezing must be tested
+          EOF
+          sed -i 's/^          //' AnyKernel3/FREEZER_CAPABILITIES.txt
 
           if [[ "${ROOT_ENGINE}" == BakaSU ]]; then
             KERNEL_DESC="ABK OnePlus 6 ${MODE} BakaSU Manual Hook (${KERNEL_SOURCE_SHORT})"
@@ -330,7 +357,10 @@ jobs:
             ZIP_NAME="ABK_OnePlus6_${ROOT_ENGINE}_SuSFS210_${MODE}_${KERNEL_SOURCE_SHORT}_$(date -u '+%Y%m%d-%H%M').zip"
           fi
           (cd AnyKernel3 && zip -r9 "../${ZIP_NAME}" .)
-          unzip -l "${ZIP_NAME}" | grep -E 'Image.gz-dtb|dtbo.img|anykernel.sh|BUILD_INFO.txt|tools/ak3-core.sh'
+          unzip -l "${ZIP_NAME}" | grep -E 'Image.gz-dtb|anykernel.sh|BUILD_INFO.txt|FREEZER_CAPABILITIES.txt|tools/ak3-core.sh'
+          if unzip -Z1 "${ZIP_NAME}" | grep -qx 'dtbo.img'; then
+            echo "::error::OTA-preserving AK3 must not contain a replacement dtbo.img"; exit 1
+          fi
           sha256sum "${ZIP_NAME}" > "${ZIP_NAME}.sha256"
           echo "ARTIFACT_NAME=${ZIP_NAME%.zip}" >> "${GITHUB_ENV}"
           echo "ZIP_NAME=${ZIP_NAME}" >> "${GITHUB_ENV}"
@@ -363,6 +393,7 @@ jobs:
             kernel/BUILD_INFO.txt
             kernel/BUILD_METADATA.sha256
             kernel/DTBO_FILES.txt
+            kernel/dtbo.img
             kernel/kernel.config
           if-no-files-found: error
           compression-level: 0
